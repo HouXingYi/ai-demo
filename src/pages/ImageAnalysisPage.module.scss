@@ -1,0 +1,82 @@
+.mainPage {
+  padding: 40px 20px;
+  min-height: 100vh;
+  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+
+  :global(.ant-upload.ant-upload-drag) {
+    background: #fafafa;
+    border: 2px dashed #d9d9d9;
+    border-radius: 8px;
+    transition: all 0.3s ease;
+
+    &:hover {
+      border-color: #1890ff;
+      background: #f0f8ff;
+    }
+  }
+
+  :global(.ant-card) {
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    transition: box-shadow 0.3s ease;
+
+    &:hover {
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+    }
+  }
+
+  :global(.ant-btn) {
+    border-radius: 6px;
+    height: 44px;
+    font-weight: 500;
+
+    &.ant-btn-primary {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border: none;
+
+      &:hover {
+        background: linear-gradient(135deg, #5a6fd8 0%, #6a4190 100%);
+      }
+    }
+  }
+
+  :global(.ant-radio-button-wrapper) {
+    border-radius: 4px;
+    height: 36px;
+    line-height: 34px;
+
+    &:first-child {
+      border-radius: 4px 0 0 4px;
+    }
+
+    &:last-child {
+      border-radius: 0 4px 4px 0;
+    }
+
+    &.ant-radio-button-wrapper-checked {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border-color: #667eea;
+      color: white;
+
+      &:hover {
+        background: linear-gradient(135deg, #5a6fd8 0%, #6a4190 100%);
+      }
+    }
+  }
+
+  :global(.ant-upload-list) {
+    margin-top: 16px;
+
+    .ant-upload-list-item {
+      border-radius: 8px;
+      margin-bottom: 8px;
+
+      &:hover {
+        background: #f0f8ff;
+      }
+    }
+  }
+}

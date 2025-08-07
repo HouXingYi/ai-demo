@@ -1,0 +1,24 @@
+/* 重置一些默认样式 */
+#root {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+}
+
+/* Ant Design 布局优化 */
+.site-layout .site-layout-background {
+  background: #fff;
+}
+
+/* 响应式优化 */
+@media (max-width: 768px) {
+  .ant-layout-sider {
+    position: fixed !important;
+    height: 100vh;
+    z-index: 999;
+  }
+
+  .ant-layout {
+    margin-left: 0 !important;
+  }
+}
