@@ -117,7 +117,7 @@ const AiChatPage: React.FC = () => {
 
       notification.success({
         message: '消息发送成功',
-        description: 'AI已回复您的消息',
+        description: 'AI已回复您的消息，请查看',
         duration: 2,
       });
 
