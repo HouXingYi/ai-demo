@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { Button, Upload, notification, message, Card, Typography, Space, Radio, Collapse, Tag, Divider, Input } from 'antd';
+import { Button, Upload, notification, message, Card, Typography, Space, Collapse, Tag, Divider, Input } from 'antd';
 import { InboxOutlined, PictureOutlined, ClearOutlined, EyeOutlined, DownloadOutlined, CopyOutlined, EditOutlined } from '@ant-design/icons';
-import type { UploadProps } from 'antd';
+import type { UploadProps, UploadFile } from 'antd';
 import BackButton from '../components/common/BackButton';
 import styles from './ImageAnalysisPage.module.scss';
 
@@ -12,15 +12,15 @@ const { TextArea } = Input;
 
 const ImageAnalysisPage: React.FC = () => {
   const [imageFiles, setImageFiles] = useState<File[]>([]);
+  const [uploadFileList, setUploadFileList] = useState<UploadFile[]>([]);
   const [analyzing, setAnalyzing] = useState(false);
   const [result, setResult] = useState<string>('');
-  const [analysisType, setAnalysisType] = useState<string>('relationship');
+
   const [customPrompt, setCustomPrompt] = useState<string>('');
   const [analysisData, setAnalysisData] = useState<{
     analysis: string;
     imageCount: number;
     imageNames: string[];
-    analysisType: string;
     customPromptUsed?: boolean;
     timestamp: string;
   } | null>(null);
@@ -29,6 +29,7 @@ const ImageAnalysisPage: React.FC = () => {
     name: 'images',
     multiple: true,
     accept: 'image/*',
+    fileList: uploadFileList,
     beforeUpload: (file, fileList) => {
       const isImage = file.type.startsWith('image/');
       if (!isImage) {
@@ -42,7 +43,7 @@ const ImageAnalysisPage: React.FC = () => {
       }
 
       // 计算当前已有的图片数量加上本次选择的图片数量
-      const totalCount = imageFiles.length + (fileList ? fileList.length : 1);
+      const totalCount = uploadFileList.length + (fileList ? fileList.length : 1);
       if (totalCount > 10) {
         message.error('最多只能上传10张图片!');
         return false;
@@ -54,15 +55,22 @@ const ImageAnalysisPage: React.FC = () => {
       // 处理文件状态变化
       const { fileList } = info;
 
-      // 过滤有效的图片文件
-      const validFiles = fileList.filter(file => {
+      // 过滤有效的图片文件（受控 fileList）
+      const filteredList = fileList.filter(file => {
         if (file.originFileObj) {
           const isImage = file.originFileObj.type.startsWith('image/');
           const isLt10M = file.originFileObj.size / 1024 / 1024 < 10;
           return isImage && isLt10M;
         }
         return false;
-      }).map(file => file.originFileObj as File);
+      });
+
+      // 限制最多10张图片（受控 fileList）
+      const limitedList = filteredList.slice(0, 10);
+      setUploadFileList(limitedList);
+
+      // 同步到原始 File 数组
+      const validFiles = limitedList.map(file => file.originFileObj as File);
 
       // 限制最多10张图片
       if (validFiles.length > 10) {
@@ -81,9 +89,6 @@ const ImageAnalysisPage: React.FC = () => {
       console.log('Dropped files', e.dataTransfer.files);
     },
     showUploadList: true,
-    onRemove: (file) => {
-      setImageFiles(imageFiles.filter(f => f.name !== file.name));
-    },
   };
 
   const handleAnalyzeImages = async () => {
@@ -97,6 +102,11 @@ const ImageAnalysisPage: React.FC = () => {
       return;
     }
 
+    if (!customPrompt.trim()) {
+      message.warning('请输入自定义提示词来指定分析要求');
+      return;
+    }
+
     setAnalyzing(true);
     setResult('');
 
@@ -105,10 +115,7 @@ const ImageAnalysisPage: React.FC = () => {
       imageFiles.forEach((file) => {
         formData.append('images', file);
       });
-      formData.append('analysisType', analysisType);
-      if (customPrompt.trim()) {
-        formData.append('customPrompt', customPrompt.trim());
-      }
+      formData.append('customPrompt', customPrompt.trim());
 
       const response = await fetch('http://localhost:3001/api/ai/analyze-multi-images', {
         method: 'POST',
@@ -148,10 +155,11 @@ const ImageAnalysisPage: React.FC = () => {
 
   const handleClearImages = () => {
     setImageFiles([]);
+    setUploadFileList([]);
     setResult('');
     setAnalysisData(null);
     setCustomPrompt('');
-    message.info('已清除所有图片选择和提示词');
+    message.info('已清除所有图片和自定义提示词');
   };
 
   const copyToClipboard = () => {
@@ -170,23 +178,7 @@ const ImageAnalysisPage: React.FC = () => {
     message.success('分析结果已下载');
   };
 
-  const getAnalysisTypeLabel = (type: string) => {
-    const labels = {
-      relationship: '关系分析',
-      comparison: '对比分析',
-      sequence: '时序分析'
-    };
-    return labels[type as keyof typeof labels] || type;
-  };
 
-  const getAnalysisTypeColor = (type: string) => {
-    const colors = {
-      relationship: 'blue',
-      comparison: 'green',
-      sequence: 'orange'
-    };
-    return colors[type as keyof typeof colors] || 'default';
-  };
 
   return (
     <div style={{ minHeight: '100vh', background: '#f5f5f5', padding: '20px' }}>
@@ -195,36 +187,22 @@ const ImageAnalysisPage: React.FC = () => {
       <div className={styles.mainPage} style={{ paddingTop: 80 }}>
         <Space direction="vertical" size="large" style={{ width: '100%', maxWidth: 800, margin: '0 auto' }}>
           <Title level={2} style={{ textAlign: 'center' }}>
-            <PictureOutlined /> AI 多图片关系分析助手
+            <PictureOutlined /> AI 多图片自定义分析助手
           </Title>
 
-          <Card title="多图片上传与分析">
-            {/* 分析类型选择 */}
-            <div style={{ marginBottom: 16 }}>
-              <Text strong>分析类型：</Text>
-              <Radio.Group
-                value={analysisType}
-                onChange={(e) => setAnalysisType(e.target.value)}
-                style={{ marginLeft: 8 }}
-              >
-                <Radio.Button value="relationship">关系分析</Radio.Button>
-                <Radio.Button value="comparison">对比分析</Radio.Button>
-                <Radio.Button value="sequence">时序分析</Radio.Button>
-              </Radio.Group>
-            </div>
-
+          <Card title="多图片上传与自定义分析">
             {/* 自定义提示词输入 */}
             <div style={{ marginBottom: 16 }}>
               <Text strong>
-                <EditOutlined /> 自定义提示词（可选）：
+                <EditOutlined /> 自定义提示词：
               </Text>
               <Text type="secondary" style={{ marginLeft: 8, fontSize: '12px' }}>
-                输入自定义提示词将覆盖默认分析模板
+                请输入您希望AI如何分析这些图片的具体要求
               </Text>
               <TextArea
                 value={customPrompt}
                 onChange={(e) => setCustomPrompt(e.target.value)}
-                placeholder="请输入您希望AI如何分析这些图片的具体要求...&#10;例如：请分析这些图片中的人物情绪变化，并描述每张图片的详细内容"
+                placeholder="请输入您希望AI如何分析这些图片的具体要求...&#10;例如：请分析这些图片中的人物情绪变化，并描述每张图片的详细内容&#10;或：对比分析这些图片的构图和色彩运用&#10;或：分析这些图片是否构成时间序列关系"
                 rows={4}
                 style={{ marginTop: 8 }}
                 maxLength={1000}
@@ -232,7 +210,7 @@ const ImageAnalysisPage: React.FC = () => {
               />
               {customPrompt.trim() && (
                 <div style={{ marginTop: 8 }}>
-                  <Tag color="orange">使用自定义提示词</Tag>
+                  <Tag color="green">已设置自定义提示词</Tag>
                   <Button
                     type="link"
                     size="small"
@@ -271,13 +249,11 @@ const ImageAnalysisPage: React.FC = () => {
                 size="large"
                 onClick={handleAnalyzeImages}
                 loading={analyzing}
-                disabled={imageFiles.length < 2}
+                disabled={imageFiles.length < 2 || !customPrompt.trim()}
               >
                 {analyzing
-                  ? (customPrompt.trim() ? 'AI正在按自定义要求分析图片...' : 'AI正在分析图片关系...')
-                  : (customPrompt.trim()
-                    ? `使用自定义提示词分析 ${imageFiles.length} 张图片`
-                    : `分析 ${imageFiles.length} 张图片的关系`)}
+                  ? 'AI正在按您的要求分析图片...'
+                  : `按自定义要求分析 ${imageFiles.length} 张图片`}
               </Button>
 
               {imageFiles.length > 0 && (
@@ -292,11 +268,14 @@ const ImageAnalysisPage: React.FC = () => {
               )}
             </Space>
 
-            {imageFiles.length === 1 && (
-              <div style={{ marginTop: 8 }}>
-                <Text type="warning">请上传至少2张图片进行关系分析</Text>
-              </div>
-            )}
+            <div style={{ marginTop: 8 }}>
+              {imageFiles.length === 1 && (
+                <Text type="warning">请上传至少2张图片进行分析</Text>
+              )}
+              {imageFiles.length >= 2 && !customPrompt.trim() && (
+                <Text type="warning">请输入自定义提示词来指定分析要求</Text>
+              )}
+            </div>
           </div>
 
           {result && analysisData && (
@@ -305,12 +284,7 @@ const ImageAnalysisPage: React.FC = () => {
                 <Space>
                   <EyeOutlined />
                   <span>AI 分析结果</span>
-                  <Tag color={getAnalysisTypeColor(analysisData.analysisType)}>
-                    {getAnalysisTypeLabel(analysisData.analysisType)}
-                  </Tag>
-                  {analysisData.customPromptUsed && (
-                    <Tag color="orange">自定义提示词</Tag>
-                  )}
+                  <Tag color="green">自定义分析</Tag>
                 </Space>
               }
               extra={
