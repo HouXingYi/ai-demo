@@ -23,10 +23,11 @@ app.use('/api', systemRoutes);
 
 
 
-// 启动服务器
-app.listen(PORT, () => {
+// 启动服务器 - 监听所有网络接口以支持内网访问
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 AI后端服务已启动（基于LangChain.js）`);
-  console.log(`📍 地址: http://localhost:${PORT}`);
+  console.log(`📍 本地地址: http://localhost:${PORT}`);
+  console.log(`🌐 内网地址: http://0.0.0.0:${PORT} (可通过内网IP访问)`);
   console.log(`🔗 健康检查: http://localhost:${PORT}/api/health`);
   console.log(`⚙️  LangChain配置: http://localhost:${PORT}/api/langchain/config`);
   console.log(`🤖 AI聊天: POST http://localhost:${PORT}/api/ai/chat`);

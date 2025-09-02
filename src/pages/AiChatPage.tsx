@@ -42,7 +42,19 @@ const AiChatPage: React.FC = () => {
     setLoading(true);
 
     try {
-      const response = await fetch('http://localhost:3001/api/ai/chat', {
+      // 动态获取API基础URL，支持内网IP访问
+      const getApiBaseUrl = () => {
+        const protocol = window.location.protocol;
+        const hostname = window.location.hostname;
+        // 如果是localhost或127.0.0.1，使用localhost:3001
+        // 否则使用当前主机的IP:3001
+        if (hostname === 'localhost' || hostname === '127.0.0.1') {
+          return `${protocol}//localhost:3001`;
+        }
+        return `${protocol}//${hostname}:3001`;
+      };
+
+      const response = await fetch(`${getApiBaseUrl()}/api/ai/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
