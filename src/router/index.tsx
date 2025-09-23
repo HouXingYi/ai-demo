@@ -2,6 +2,7 @@ import { createBrowserRouter } from 'react-router-dom';
 import HomePage from '../pages/HomePage';
 import AiChatPage from '../pages/AiChatPage';
 import ImageAnalysisPage from '../pages/ImageAnalysisPage';
+import SmartListAnalysisPage from '../pages/SmartListAnalysisPage';
 
 export const router = createBrowserRouter([
   {
@@ -15,6 +16,10 @@ export const router = createBrowserRouter([
   {
     path: '/image-analysis',
     element: <ImageAnalysisPage />,
+  },
+  {
+    path: '/smart-list',
+    element: <SmartListAnalysisPage />,
   },
   {
     // 404 页面重定向到首页

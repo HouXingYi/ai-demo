@@ -1,5 +1,5 @@
 import { Button, Card, Space, Typography } from 'antd';
-import { MessageOutlined, PictureOutlined, RobotOutlined } from '@ant-design/icons';
+import { MessageOutlined, PictureOutlined, RobotOutlined, BulbOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 
 const { Title, Paragraph } = Typography;
@@ -13,6 +13,10 @@ const HomePage: React.FC = () => {
 
   const navigateToImageAnalysis = () => {
     navigate('/image-analysis');
+  };
+
+  const navigateToSmartList = () => {
+    navigate('/smart-list');
   };
 
   return (
@@ -97,6 +101,40 @@ const HomePage: React.FC = () => {
                 }}
               >
                 分析图片 →
+              </Button>
+            </div>
+          </Card>
+
+          <Card
+            hoverable
+            style={{
+              borderRadius: 16,
+              boxShadow: '0 8px 32px rgba(0,0,0,0.1)',
+              border: 'none'
+            }}
+            bodyStyle={{ padding: 32 }}
+          >
+            <div style={{ textAlign: 'center' }}>
+              <BulbOutlined style={{ fontSize: 64, color: '#fa8c16', marginBottom: 16 }} />
+              <Title level={3} style={{ marginBottom: 16 }}>智能列表分析</Title>
+              <Paragraph style={{ fontSize: 16, color: '#666', marginBottom: 24 }}>
+                基于AI的智能商品列表分析系统，支持根据自然语言提示词
+                筛选、对比、推荐和总结商品信息。
+              </Paragraph>
+              <Button
+                type="primary"
+                size="large"
+                onClick={navigateToSmartList}
+                style={{
+                  height: 48,
+                  fontSize: 16,
+                  borderRadius: 8,
+                  padding: '0 32px',
+                  backgroundColor: '#fa8c16',
+                  borderColor: '#fa8c16'
+                }}
+              >
+                开始分析 →
               </Button>
             </div>
           </Card>
