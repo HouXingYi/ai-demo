@@ -10,11 +10,13 @@ import {
   notification,
   Select,
   Pagination,
-  Tooltip
+  Tooltip,
+  Modal,
+  Image,
+  Spin
 } from 'antd';
 import {
   SearchOutlined,
-  BulbOutlined,
   ReloadOutlined,
   EyeOutlined
 } from '@ant-design/icons';
@@ -23,7 +25,7 @@ import BackButton from '../components/common/BackButton';
 import listData from '../mock-data/list-data-30';
 
 const { TextArea } = Input;
-const { Title, Text, Paragraph } = Typography;
+const { Text, Paragraph } = Typography;
 const { Option } = Select;
 
 // 操作记录数据类型定义
@@ -48,11 +50,70 @@ const SmartListAnalysisPage: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
+  // 图片预览相关状态
+  const [previewVisible, setPreviewVisible] = useState(false);
+  const [previewImage, setPreviewImage] = useState<string>('');
+  const [previewTitle, setPreviewTitle] = useState<string>('');
+  const [imageLoading, setImageLoading] = useState(false);
+
   // 计算当前页数据
   const getCurrentPageData = () => {
     const startIndex = (currentPage - 1) * pageSize;
     const endIndex = startIndex + pageSize;
     return filteredData.slice(startIndex, endIndex);
+  };
+
+  // 处理图片预览
+  const handleImagePreview = async (fileName: string, recordInfo: ListItem) => {
+    if (!fileName) {
+      notification.warning({
+        message: '无截图',
+        description: '该记录没有对应的截图文件',
+      });
+      return;
+    }
+
+    setImageLoading(true);
+    setPreviewTitle(`${recordInfo.webpageName} - ${recordInfo.triggerTime}`);
+
+    try {
+      // 构建图片路径
+      const imagePath = `/screenshotFile/${fileName}`;
+
+      // 预加载图片以检查是否存在
+      const img = new window.Image();
+      img.onload = () => {
+        setPreviewImage(imagePath);
+        setPreviewVisible(true);
+        setImageLoading(false);
+        console.log(`✅ 成功加载图片: ${fileName}`);
+      };
+
+      img.onerror = () => {
+        setImageLoading(false);
+        notification.error({
+          message: '图片加载失败',
+          description: `无法加载截图文件: ${fileName}`,
+        });
+        console.error(`❌ 图片加载失败: ${fileName}`);
+      };
+
+      img.src = imagePath;
+    } catch (error) {
+      setImageLoading(false);
+      notification.error({
+        message: '预览失败',
+        description: '图片预览功能出现错误',
+      });
+      console.error('图片预览错误:', error);
+    }
+  };
+
+  // 关闭图片预览
+  const handlePreviewClose = () => {
+    setPreviewVisible(false);
+    setPreviewImage('');
+    setPreviewTitle('');
   };
 
   // 表格列定义
@@ -121,19 +182,14 @@ const SmartListAnalysisPage: React.FC = () => {
       dataIndex: 'screenshotFileName',
       key: 'screenshot',
       width: 120,
-      render: (fileName: string) => (
+      render: (fileName: string, record: ListItem) => (
         fileName ? (
           <Button
             type="link"
             icon={<EyeOutlined />}
             size="small"
-            onClick={() => {
-              // 这里可以添加查看截图的逻辑
-              notification.info({
-                message: '截图查看',
-                description: `截图文件: ${fileName}`
-              });
-            }}
+            loading={imageLoading}
+            onClick={() => handleImagePreview(fileName, record)}
           >
             查看
           </Button>
@@ -210,6 +266,7 @@ const SmartListAnalysisPage: React.FC = () => {
     console.log('\n=== 前端：开始分析流程 ===');
     console.log('🎯 当前提示词：', prompt);
     console.log('📊 总数据量：', data.length, '条记录');
+    console.log('📋 分析前筛选状态：', filteredData.length, '条记录');
 
     if (!prompt.trim()) {
       notification.warning({
@@ -327,8 +384,20 @@ ${JSON.stringify(data, null, 2)}
 
             setAnalysisResult(analysisText);
 
-            // 尝试提取筛选结果
-            const filteredMatch = analysisText.match(/FILTERED_RESULTS:\s*\[([\d,\s]*)\]/);
+            // 尝试提取筛选结果（支持多种格式）
+            let filteredMatch = analysisText.match(/FILTERED_RESULTS:\s*\[([\d,\s]*)\]/);
+
+            // 如果没找到标准格式，尝试其他可能的格式
+            if (!filteredMatch) {
+              filteredMatch = analysisText.match(/筛选结果:\s*\[([\d,\s]*)\]/);
+            }
+            if (!filteredMatch) {
+              filteredMatch = analysisText.match(/符合条件的记录:\s*\[([\d,\s]*)\]/);
+            }
+            if (!filteredMatch) {
+              filteredMatch = analysisText.match(/serialNumber[^:]*:\s*\[([\d,\s]*)\]/);
+            }
+
             if (filteredMatch) {
               console.log('🎯 找到筛选结果:', filteredMatch[1]);
               const filteredNumbers = filteredMatch[1]
@@ -345,10 +414,16 @@ ${JSON.stringify(data, null, 2)}
               console.log('📊 筛选后的记录数量:', filteredRecords.length);
               setFilteredData(filteredRecords);
             } else {
-              console.log('⚠️ 未找到筛选结果标记，显示所有数据');
+              console.log('⚠️ 未找到筛选结果标记，保持当前筛选状态或显示所有有截图的数据');
+              // 如果没有找到筛选结果，显示所有有截图的记录
+              const recordsWithScreenshots = data.filter(record => record.screenshotFileName);
+              console.log('📊 显示所有有截图的记录数量:', recordsWithScreenshots.length);
+              setFilteredData(recordsWithScreenshots);
             }
 
+            // 强制刷新表格状态
             setCurrentPage(1);
+            console.log('🔄 表格状态已更新，当前页面重置为第1页');
             notification.success({
               message: '分析完成',
               description: `AI已完成操作记录分析，共分析了${imageFiles.length}张截图`,
@@ -379,8 +454,49 @@ ${JSON.stringify(data, null, 2)}
 
         const result = await response.json();
         if (result.success) {
-          setAnalysisResult(result.data.message);
+          const analysisText = result.data.message;
+          setAnalysisResult(analysisText);
+
+          console.log('📄 文本分析结果:', analysisText);
+
+          // 尝试提取筛选结果（文本分析，支持多种格式）
+          let filteredMatch = analysisText.match(/FILTERED_RESULTS:\s*\[([\d,\s]*)\]/);
+
+          // 如果没找到标准格式，尝试其他可能的格式
+          if (!filteredMatch) {
+            filteredMatch = analysisText.match(/筛选结果:\s*\[([\d,\s]*)\]/);
+          }
+          if (!filteredMatch) {
+            filteredMatch = analysisText.match(/符合条件的记录:\s*\[([\d,\s]*)\]/);
+          }
+          if (!filteredMatch) {
+            filteredMatch = analysisText.match(/serialNumber[^:]*:\s*\[([\d,\s]*)\]/);
+          }
+
+          if (filteredMatch) {
+            console.log('🎯 找到筛选结果:', filteredMatch[1]);
+            const filteredNumbers = filteredMatch[1]
+              .split(',')
+              .map((n: string) => parseInt(n.trim()))
+              .filter((n: number) => !isNaN(n));
+
+            console.log('🔢 筛选的序号:', filteredNumbers);
+
+            // 根据筛选结果更新显示的数据
+            const filteredRecords = data.filter(record =>
+              filteredNumbers.includes(record.serialNumber)
+            );
+            console.log('📊 筛选后的记录数量:', filteredRecords.length);
+            setFilteredData(filteredRecords);
+          } else {
+            console.log('⚠️ 文本分析未找到筛选结果标记，显示所有数据');
+            // 如果没有找到筛选结果，保持显示所有数据
+            setFilteredData([...data]);
+          }
+
+          // 强制刷新表格状态
           setCurrentPage(1);
+          console.log('🔄 文本分析表格状态已更新，当前页面重置为第1页');
 
           notification.success({
             message: '分析完成',
@@ -411,9 +527,6 @@ ${JSON.stringify(data, null, 2)}
       <BackButton />
 
       <div style={{ maxWidth: 1400, margin: '0 auto', paddingTop: 80 }}>
-        <Title level={2} style={{ textAlign: 'center', marginBottom: 24 }}>
-          <BulbOutlined /> 智能操作记录分析
-        </Title>
 
         {/* 分析控制面板 */}
         <Card style={{ marginBottom: 24 }}>
@@ -520,6 +633,36 @@ ${JSON.stringify(data, null, 2)}
           </div>
         </Card>
       </div>
+
+      {/* 图片预览Modal */}
+      <Modal
+        title={previewTitle}
+        open={previewVisible}
+        onCancel={handlePreviewClose}
+        footer={null}
+        width={800}
+        centered
+        destroyOnClose
+        maskClosable={true}
+        keyboard={true}
+      >
+        {imageLoading ? (
+          <div style={{ textAlign: 'center', padding: '50px' }}>
+            <Spin size="large" />
+            <div style={{ marginTop: 16 }}>正在加载图片...</div>
+          </div>
+        ) : (
+          previewImage && (
+            <Image
+              src={previewImage}
+              alt="截图预览"
+              style={{ width: '100%' }}
+              preview={false}
+              fallback="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMIAAADDCAYAAADQvc6UAAABRWlDQ1BJQ0MgUHJvZmlsZQAAKJFjYGASSSwoyGFhYGDIzSspCnJ3UoiIjFJgf8LAwSDCIMogwMCcmFxc4BgQ4ANUwgCjUcG3awyMIPqyLsis7PPOq3QdDFcvjV3jOD1boQVTPQrgSkktTgbSf4A4LbmgqISBgTEFyFYuLykAsTuAbJEioKOA7DkgdjqEvQHEToKwj4DVhAQ5A9k3gGyB5IxEoBmML4BsnSQk8XQkNtReEOBxcfXxUQg1Mjc0dyHgXNJBSWpFCYh2zi+oLMpMzyhRcASGUqqCZ16yno6CkYGRAQMDKMwhqj/fAIcloxgHQqxAjIHBEugw5sUIsSQpBobtQPdLciLEVJYzMPBHMDBsayhILEqEO4DxG0txmrERhM29nYGBddr//5/DGRjYNRkY/l7////39v///y4Dmn+LgeHANwDrkl1AuO+pmgAAADhlWElmTU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAAqACAAQAAAABAAAAwqADAAQAAAABAAAAwwAAAAD9b/HnAAAHlklEQVR4Ae3dP3Ik1RnG4W+FgYxN"
+            />
+          )
+        )}
+      </Modal>
     </div>
   );
 };
