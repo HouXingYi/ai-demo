@@ -22,7 +22,7 @@ import {
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import BackButton from '../components/common/BackButton';
-import listData from '../mock-data/list-data-30';
+import listData from '../mock-data/list-data-100';
 
 const { TextArea } = Input;
 const { Text, Paragraph } = Typography;
@@ -224,10 +224,11 @@ const SmartListAnalysisPage: React.FC = () => {
     setData([...listData]);
     setFilteredData([...listData]);
     setAnalysisResult('');
+    setPrompt(''); // 清空搜索词
     setCurrentPage(1);
     notification.success({
       message: '数据已重新加载',
-      description: `成功加载 ${listData.length} 条操作记录`,
+      description: `成功加载 ${listData.length} 条操作记录，搜索词已清空`,
     });
   };
 
@@ -241,7 +242,7 @@ const SmartListAnalysisPage: React.FC = () => {
     });
   };
 
-  // 获取图片文件
+  // 获取图片文件（增强版 - 支持图片验证）
   const getImageFile = async (fileName: string): Promise<File | null> => {
     try {
       // 使用public目录中的图片文件
@@ -249,16 +250,70 @@ const SmartListAnalysisPage: React.FC = () => {
       const response = await fetch(imagePath);
 
       if (!response.ok) {
-        console.error(`无法获取图片: ${imagePath}, 状态: ${response.status}`);
+        console.error(`❌ 无法获取图片: ${imagePath}, 状态: ${response.status}`);
         return null;
       }
 
       const blob = await response.blob();
+
+      // 验证文件大小
+      if (blob.size === 0) {
+        console.error(`❌ 图片文件为空: ${fileName}`);
+        return null;
+      }
+
+      // 验证MIME类型
+      const validTypes = ['image/webp', 'image/jpeg', 'image/jpg', 'image/png'];
+      if (!validTypes.includes(blob.type)) {
+        console.warn(`⚠️ 图片类型可能不正确: ${fileName}, 类型: ${blob.type}`);
+      }
+
+      // 尝试验证图片文件头
+      const arrayBuffer = await blob.arrayBuffer();
+      const uint8Array = new Uint8Array(arrayBuffer);
+
+      // 检查常见的图片文件头
+      const isValidImage = validateImageHeader(uint8Array, fileName);
+      if (!isValidImage) {
+        console.error(`❌ 图片文件头验证失败: ${fileName}`);
+        return null;
+      }
+
+      console.log(`✅ 图片验证通过: ${fileName}, 大小: ${blob.size} bytes, 类型: ${blob.type}`);
       return new File([blob], fileName, { type: blob.type });
     } catch (error) {
-      console.error(`获取图片文件失败: ${fileName}`, error);
+      console.error(`❌ 获取图片文件失败: ${fileName}`, error);
       return null;
     }
+  };
+
+  // 验证图片文件头
+  const validateImageHeader = (uint8Array: Uint8Array, fileName: string): boolean => {
+    if (uint8Array.length < 4) {
+      return false;
+    }
+
+    // WebP文件头: RIFF....WEBP
+    if (fileName.toLowerCase().endsWith('.webp')) {
+      const riffHeader = uint8Array.slice(0, 4);
+      const webpHeader = uint8Array.slice(8, 12);
+      const isRIFF = String.fromCharCode(...riffHeader) === 'RIFF';
+      const isWEBP = String.fromCharCode(...webpHeader) === 'WEBP';
+      return isRIFF && isWEBP;
+    }
+
+    // JPEG文件头: FF D8 FF
+    if (fileName.toLowerCase().endsWith('.jpeg') || fileName.toLowerCase().endsWith('.jpg')) {
+      return uint8Array[0] === 0xFF && uint8Array[1] === 0xD8 && uint8Array[2] === 0xFF;
+    }
+
+    // PNG文件头: 89 50 4E 47
+    if (fileName.toLowerCase().endsWith('.png')) {
+      return uint8Array[0] === 0x89 && uint8Array[1] === 0x50 &&
+        uint8Array[2] === 0x4E && uint8Array[3] === 0x47;
+    }
+
+    return true; // 对于其他格式，暂时返回true
   };
 
   // 执行AI分析
@@ -270,8 +325,8 @@ const SmartListAnalysisPage: React.FC = () => {
 
     if (!prompt.trim()) {
       notification.warning({
-        message: '请输入分析提示词',
-        description: '请描述您想要分析或筛选的内容',
+        message: '请输入搜索提示词',
+        description: '请描述您想要搜索或筛选的内容',
       });
       return;
     }
@@ -332,8 +387,11 @@ ${JSON.stringify(data, null, 2)}
         console.log(`📊 数据统计: 总记录${data.length}条，有截图${recordsWithScreenshots.length}条，本次处理${recordsToProcess.length}条`);
         console.log(`🚀 超大批量模式: 支持最多${maxFiles}个图片同时分析`);
 
-        // 分批获取图片文件，显示进度
+        // 分批获取图片文件，显示进度（增强版错误统计）
         let processedCount = 0;
+        let successCount = 0;
+        const failedFiles: string[] = [];
+
         for (const record of recordsToProcess) {
           console.log(`正在获取图片: ${record.screenshotFileName} (${processedCount + 1}/${recordsToProcess.length})`);
           try {
@@ -341,18 +399,32 @@ ${JSON.stringify(data, null, 2)}
             if (imageFile) {
               formData.append('images', imageFile);
               imageFiles.push(record.screenshotFileName);
-              processedCount++;
+              successCount++;
               console.log(`✅ 成功获取图片: ${record.screenshotFileName}, 大小: ${imageFile.size} bytes`);
-              console.log(`📈 获取进度: ${processedCount}/${recordsToProcess.length} (${Math.round(processedCount / recordsToProcess.length * 100)}%)`);
             } else {
+              failedFiles.push(record.screenshotFileName);
               console.warn(`⚠️ 无法获取图片: ${record.screenshotFileName}`);
             }
           } catch (error) {
+            failedFiles.push(record.screenshotFileName);
             console.error(`❌ 获取图片时出错: ${record.screenshotFileName}`, error);
           }
+
+          processedCount++;
+          console.log(`📈 获取进度: ${processedCount}/${recordsToProcess.length} (${Math.round(processedCount / recordsToProcess.length * 100)}%) - 成功: ${successCount}, 失败: ${failedFiles.length}`);
         }
 
-        console.log(`总共成功获取 ${imageFiles.length} 张图片`);
+        // 显示详细的处理结果统计
+        console.log(`📊 图片处理完成统计:`);
+        console.log(`  📋 数据记录中有截图: ${recordsToProcess.length} 条`);
+        console.log(`  ✅ 成功获取并验证: ${successCount} 个文件`);
+        console.log(`  ❌ 失败或无效: ${failedFiles.length} 个文件`);
+        console.log(`  📤 实际发送给AI: ${imageFiles.length} 张图片`);
+        if (failedFiles.length > 0) {
+          console.log(`  📋 失败文件列表:`, failedFiles);
+        }
+
+        console.log(`📊 最终统计: 尝试处理 ${recordsToProcess.length} 条记录，成功获取 ${imageFiles.length} 张有效图片`);
 
         if (imageFiles.length > 0) {
           console.log(`🚀 发送请求到: ${getApiBaseUrl()}/api/ai/analyze-multi-images`);
@@ -425,8 +497,8 @@ ${JSON.stringify(data, null, 2)}
             setCurrentPage(1);
             console.log('🔄 表格状态已更新，当前页面重置为第1页');
             notification.success({
-              message: '分析完成',
-              description: `AI已完成操作记录分析，共分析了${imageFiles.length}张截图`,
+              message: '搜索完成',
+              description: `AI已完成操作记录搜索，成功分析了${imageFiles.length}张有效截图${failedFiles.length > 0 ? `，跳过了${failedFiles.length}个无效文件` : ''}`,
             });
           } else {
             throw new Error(result.error || '图片分析失败');
@@ -499,8 +571,8 @@ ${JSON.stringify(data, null, 2)}
           console.log('🔄 文本分析表格状态已更新，当前页面重置为第1页');
 
           notification.success({
-            message: '分析完成',
-            description: 'AI已完成操作记录分析',
+            message: '搜索完成',
+            description: 'AI已完成操作记录搜索',
           });
         } else {
           throw new Error(result.error || '分析失败');
@@ -512,10 +584,10 @@ ${JSON.stringify(data, null, 2)}
       console.error('❌ 错误详情:', errorMessage);
 
       notification.error({
-        message: '分析失败',
+        message: '搜索失败',
         description: errorMessage,
       });
-      setAnalysisResult(`分析失败: ${errorMessage}`);
+      setAnalysisResult(`搜索失败: ${errorMessage}`);
     } finally {
       setLoading(false);
       console.log('=== 前端：分析流程结束 ===\n');
@@ -539,7 +611,7 @@ ${JSON.stringify(data, null, 2)}
                 loading={loading}
                 size="large"
               >
-                开始分析
+                开始搜索
               </Button>
 
               <Button
@@ -560,11 +632,18 @@ ${JSON.stringify(data, null, 2)}
             </div>
 
             <div>
-              <Text strong>分析提示词:</Text>
+              <Text strong>搜索提示词:</Text>
               <TextArea
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
-                placeholder="例如：筛选出访问亚马逊网站的操作记录，或者分析点击操作的频率..."
+                onPressEnter={(e) => {
+                  // Ctrl+Enter 或 Shift+Enter 开始搜索
+                  if (e.ctrlKey || e.shiftKey) {
+                    e.preventDefault();
+                    handleAnalyze();
+                  }
+                }}
+                placeholder="例如：筛选出访问亚马逊网站的操作记录，或者分析点击操作的频率... (按Ctrl+回车或Shift+回车开始搜索)"
                 rows={3}
                 style={{ marginTop: 8 }}
               />
@@ -574,7 +653,7 @@ ${JSON.stringify(data, null, 2)}
             {analysisResult && (
               <Card size="small" style={{ background: '#f9f9f9' }}>
                 <div style={{ maxHeight: 200, overflowY: 'auto' }}>
-                  <Text strong style={{ color: '#1890ff' }}>分析结果：</Text>
+                  <Text strong style={{ color: '#1890ff' }}>搜索结果：</Text>
                   <Paragraph style={{ whiteSpace: 'pre-wrap', margin: '8px 0 0 0' }}>
                     {analysisResult}
                   </Paragraph>
