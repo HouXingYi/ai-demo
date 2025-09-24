@@ -20,7 +20,7 @@ import {
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import BackButton from '../components/common/BackButton';
-import listData from '../mock-data/list-data';
+import listData from '../mock-data/list-data-30';
 
 const { TextArea } = Input;
 const { Title, Text, Paragraph } = Typography;
@@ -267,25 +267,31 @@ ${JSON.stringify(data, null, 2)}
         const formData = new FormData();
         formData.append('customPrompt', analysisPrompt);
 
-        // 收集所有截图文件（限制最多5个文件以配合后端限制）
+        // 收集所有截图文件（支持最多200个文件的超大批量处理）
         const imageFiles = [];
-        const maxFiles = 5;
+        const maxFiles = 200;
         const recordsToProcess = recordsWithScreenshots.slice(0, maxFiles);
         console.log(`开始处理 ${recordsToProcess.length} 条有截图的记录（最多${maxFiles}个文件）`);
+        console.log(`📊 数据统计: 总记录${data.length}条，有截图${recordsWithScreenshots.length}条，本次处理${recordsToProcess.length}条`);
+        console.log(`🚀 超大批量模式: 支持最多${maxFiles}个图片同时分析`);
 
+        // 分批获取图片文件，显示进度
+        let processedCount = 0;
         for (const record of recordsToProcess) {
-          console.log(`正在获取图片: ${record.screenshotFileName}`);
+          console.log(`正在获取图片: ${record.screenshotFileName} (${processedCount + 1}/${recordsToProcess.length})`);
           try {
             const imageFile = await getImageFile(record.screenshotFileName);
             if (imageFile) {
               formData.append('images', imageFile);
               imageFiles.push(record.screenshotFileName);
-              console.log(`成功获取图片: ${record.screenshotFileName}, 大小: ${imageFile.size} bytes`);
+              processedCount++;
+              console.log(`✅ 成功获取图片: ${record.screenshotFileName}, 大小: ${imageFile.size} bytes`);
+              console.log(`📈 获取进度: ${processedCount}/${recordsToProcess.length} (${Math.round(processedCount / recordsToProcess.length * 100)}%)`);
             } else {
-              console.warn(`无法获取图片: ${record.screenshotFileName}`);
+              console.warn(`⚠️ 无法获取图片: ${record.screenshotFileName}`);
             }
           } catch (error) {
-            console.error(`获取图片时出错: ${record.screenshotFileName}`, error);
+            console.error(`❌ 获取图片时出错: ${record.screenshotFileName}`, error);
           }
         }
 

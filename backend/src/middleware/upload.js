@@ -19,9 +19,13 @@ const storage = multer.diskStorage({
 export const upload = multer({
   storage: storage,
   limits: {
-    fileSize: 5 * 1024 * 1024, // 单个文件5MB限制（降低内存使用）
-    files: 5, // 最多5个文件（减少同时处理的文件数量）
-    fieldSize: 1024 * 1024, // 字段大小限制1MB
+    fileSize: 15 * 1024 * 1024, // 单个文件15MB限制
+    files: 200, // 最多200个文件（超大批量处理）
+    fieldSize: 10 * 1024 * 1024, // 字段大小限制10MB
+    totalFileSize: 500 * 1024 * 1024, // 总文件大小限制500MB
+    fieldNameSize: 2048, // 字段名大小限制2KB
+    fields: 2000, // 最大字段数量
+    parts: 2000, // 最大部分数量
   },
   fileFilter: (req, file, cb) => {
     // 只允许图片文件

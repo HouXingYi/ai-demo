@@ -18,13 +18,13 @@ const handleMulterError = (err, req, res, next) => {
       case 'LIMIT_FILE_SIZE':
         return res.status(400).json({
           success: false,
-          error: '文件大小超过限制（最大5MB）',
+          error: '文件大小超过限制（最大15MB）',
           framework: 'LangChain.js'
         });
       case 'LIMIT_FILE_COUNT':
         return res.status(400).json({
           success: false,
-          error: '文件数量超过限制（最多5个文件）',
+          error: '文件数量超过限制（最多200个文件）',
           framework: 'LangChain.js'
         });
       case 'LIMIT_UNEXPECTED_FILE':
@@ -50,8 +50,8 @@ const handleMulterError = (err, req, res, next) => {
   next();
 };
 
-// 多图片分析API路由 - 使用LangChain.js重构（优化版）
-router.post('/analyze-multi-images', upload.array('images', 5), handleMulterError, async (req, res) => {
+// 多图片分析API路由 - 使用LangChain.js重构（超大批量优化版）
+router.post('/analyze-multi-images', upload.array('images', 200), handleMulterError, async (req, res) => {
   console.log('\n=== 开始多图片分析请求 ===');
   console.log('请求时间:', new Date().toISOString());
   console.log('接收到的文件数量:', req.files ? req.files.length : 0);
@@ -80,25 +80,60 @@ router.post('/analyze-multi-images', upload.array('images', 5), handleMulterErro
       });
     }
 
-    // 处理多张图片
+    // 处理多张图片（超大批量优化版 - 支持200个文件）
     console.log('📷 开始处理图片文件...');
     const imageUrls = [];
     const imageNames = [];
+    const batchSize = 20; // 每批处理20个文件，针对200个文件优化
+    let totalProcessed = 0;
 
-    for (const file of req.files) {
-      console.log(`处理文件: ${file.originalname}, 大小: ${file.size} bytes, 类型: ${file.mimetype}`);
+    console.log(`🎯 超大批量处理模式: ${req.files.length} 个文件，每批处理 ${batchSize} 个`);
 
-      const imageBuffer = await fs.readFile(file.path);
-      const base64Image = imageBuffer.toString('base64');
-      const mimeType = file.mimetype;
-      const imageUrl = `data:${mimeType};base64,${base64Image}`;
+    // 分批处理文件以优化内存使用
+    for (let i = 0; i < req.files.length; i += batchSize) {
+      const batch = req.files.slice(i, i + batchSize);
+      console.log(`📦 处理第 ${Math.floor(i / batchSize) + 1} 批文件 (${batch.length} 个文件)`);
 
-      imageUrls.push(imageUrl);
-      imageNames.push(file.originalname);
-      console.log(`✅ 成功处理: ${file.originalname}, Base64长度: ${base64Image.length}`);
+      for (const file of batch) {
+        try {
+          console.log(`处理文件: ${file.originalname}, 大小: ${file.size} bytes, 类型: ${file.mimetype}`);
+
+          const imageBuffer = await fs.readFile(file.path);
+          const base64Image = imageBuffer.toString('base64');
+          const mimeType = file.mimetype;
+          const imageUrl = `data:${mimeType};base64,${base64Image}`;
+
+          imageUrls.push(imageUrl);
+          imageNames.push(file.originalname);
+          totalProcessed++;
+
+          console.log(`✅ 成功处理: ${file.originalname}, Base64长度: ${base64Image.length}`);
+          console.log(`📈 进度: ${totalProcessed}/${req.files.length} (${Math.round(totalProcessed / req.files.length * 100)}%)`);
+
+          // 释放buffer内存
+          imageBuffer.fill(0);
+        } catch (fileError) {
+          console.error(`❌ 处理文件失败: ${file.originalname}`, fileError);
+          // 继续处理其他文件，不中断整个流程
+        }
+      }
+
+      // 每批处理完后暂停，强制垃圾回收和内存清理
+      if (i + batchSize < req.files.length) {
+        console.log(`⏸️ 批处理间隔休息，当前内存使用: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB`);
+
+        // 强制垃圾回收（如果可用）
+        if (global.gc) {
+          global.gc();
+          console.log(`🧹 强制垃圾回收完成，内存使用: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB`);
+        }
+
+        // 适当延长休息时间以处理大批量文件
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
     }
 
-    console.log(`📊 总共处理了 ${imageUrls.length} 张图片`);
+    console.log(`📊 总共成功处理了 ${imageUrls.length} 张图片，跳过了 ${req.files.length - imageUrls.length} 张`);
 
     // 使用用户自定义的提示词
     const promptText = customPrompt.trim();
