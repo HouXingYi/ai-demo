@@ -614,8 +614,8 @@ ${JSON.stringify(data, null, 2)}
 分析要求：
 1. 结合截图内容理解操作的具体场景
 2. 根据用户需求筛选符合条件的操作记录
-3. 在分析结果的最后，请用JSON格式返回符合条件的记录的serialNumber列表，格式如下：
-   FILTERED_RESULTS: [1, 5, 10, 15]
+3. 用友好、自然的语言总结分析结果
+4. 在最后添加一个隐藏标记供程序识别：##RESULTS##[1, 5, 10, 15]
 `;
 
       if (recordsWithScreenshots.length > 0) {
@@ -825,19 +825,8 @@ ${JSON.stringify(data, null, 2)}
 
           console.log('📄 文本分析结果:', analysisText);
 
-          // 尝试提取筛选结果（文本分析，支持多种格式）
-          let filteredMatch = analysisText.match(/FILTERED_RESULTS:\s*\[([\d,\s]*)\]/);
-
-          // 如果没找到标准格式，尝试其他可能的格式
-          if (!filteredMatch) {
-            filteredMatch = analysisText.match(/筛选结果:\s*\[([\d,\s]*)\]/);
-          }
-          if (!filteredMatch) {
-            filteredMatch = analysisText.match(/符合条件的记录:\s*\[([\d,\s]*)\]/);
-          }
-          if (!filteredMatch) {
-            filteredMatch = analysisText.match(/serialNumber[^:]*:\s*\[([\d,\s]*)\]/);
-          }
+          // 提取筛选结果（新格式：##RESULTS##）
+          const filteredMatch = analysisText.match(/##RESULTS##\s*\[([\d,\s]*)\]/);
 
           if (filteredMatch) {
             console.log('🎯 找到筛选结果:', filteredMatch[1]);
@@ -991,12 +980,35 @@ ${JSON.stringify(data, null, 2)}
               />
             )}
 
-            {/* 分析结果 */}
+            {/* 分析结果（实时更新，支持长内容） */}
             {analysisResult && (
-              <Card size="small" style={{ background: '#f9f9f9' }}>
-                <div style={{ maxHeight: 200, overflowY: 'auto' }}>
-                  <Text strong style={{ color: '#1890ff' }}>搜索结果：</Text>
-                  <Paragraph style={{ whiteSpace: 'pre-wrap', margin: '8px 0 0 0' }}>
+              <Card
+                size="small"
+                style={{ background: '#f9f9f9' }}
+                title={
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text strong style={{ color: '#1890ff' }}>搜索结果（实时更新）：</Text>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      {analysisResult.length} 字符
+                    </Text>
+                  </div>
+                }
+              >
+                <div style={{
+                  maxHeight: '70vh',
+                  minHeight: 400,
+                  overflowY: 'auto',
+                  padding: '12px',
+                  border: '1px solid #f0f0f0',
+                  borderRadius: '4px',
+                  backgroundColor: '#ffffff'
+                }}>
+                  <Paragraph style={{
+                    whiteSpace: 'pre-wrap',
+                    margin: '0',
+                    fontSize: '14px',
+                    lineHeight: '1.8'
+                  }}>
                     {analysisResult}
                   </Paragraph>
                 </div>

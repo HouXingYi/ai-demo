@@ -493,6 +493,19 @@ ${detailedMappingInfo}
       console.log(`\n📦 处理第 ${chunkIndex + 1}/${totalChunks} 批图片 (${chunkImageUrls.length} 张)`);
       console.log(`📋 当前批次图片: ${chunkImageNames.join(', ')}`);
 
+      // 严格验证：图片数量必须与映射数据一致
+      if (chunkImageUrls.length !== chunkMappingData.length) {
+        console.error(`❌ 严重错误：第 ${chunkIndex + 1} 批图片数量(${chunkImageUrls.length})与映射数据(${chunkMappingData.length})不一致！`);
+        console.error(`图片: ${chunkImageNames.join(', ')}`);
+        console.error(`映射: ${chunkMappingData.map(m => m.fileName).join(', ')}`);
+      }
+
+      // 如果这批次没有图片，跳过
+      if (chunkImageUrls.length === 0) {
+        console.warn(`⚠️ 第 ${chunkIndex + 1} 批没有图片，跳过处理`);
+        continue;
+      }
+
       // 验证当前批次的映射数据
       console.log(`🔍 当前批次映射验证:`);
       chunkMappingData.forEach((mapping, idx) => {
@@ -517,16 +530,28 @@ ${detailedMappingInfo}
           chunkPrompt += `🔥 当前批次图片信息：\n${chunkMappingInfo}\n\n`;
         }
 
-        chunkPrompt += `📋 重要说明：
-1. ✅ 我已经将 ${chunkImageUrls.length} 张截图图片发送给你了，请仔细查看这些图片
-2. 这是第${chunkIndex + 1}批图片（共${totalChunks}批）
-3. 请根据用户需求："${customPrompt.trim()}"来分析我发送的这${chunkImageUrls.length}张图片的实际内容
-4. 请严格按照图片顺序分析，第1张图片对应【图片 1】的信息
-5. 请务必查看图片的实际内容（页面截图、文字、UI元素等）来判断是否符合条件
-6. 在分析结果末尾输出符合条件的序列号：FILTERED_RESULTS: [序列号1, 序列号2, ...]
-7. 即使某张图片不符合条件，也要简要说明原因
+        chunkPrompt += `📋 分析要求：
+1. ✅ 我已经将 ${chunkImageUrls.length} 张截图图片随本消息一起发送给你了
+2. 📊 图片详情：${chunkMappingData.map((m, i) => `第${i + 1}张(序列号${m.serialNumber})`).join(', ')}
+3. 这是第${chunkIndex + 1}批图片（共${totalChunks}批）
+4. 请根据用户需求："${customPrompt.trim()}"来分析我发送的这${chunkImageUrls.length}张图片的实际内容
+5. 请严格按照图片顺序分析，第1张图片对应【图片 1】的信息
+6. 请务必查看图片的实际内容（页面截图、文字、UI元素等）来判断是否符合条件
 
-⚠️ 注意：图片已经随这条消息一起发送，请基于实际图片内容进行分析，不要说"没有提供图片"。
+📝 输出格式要求：
+- 请用自然、友好的语言描述每张图片的内容
+- 说明每张图片是否符合用户需求，以及原因
+- 在分析的最后，用口语化的方式总结，例如：
+  "经过分析，序列号9和序列号131的截图符合您的搜索条件。"
+  或者 "很遗憾，本批次的截图都不符合您的搜索要求。"
+- 在总结的最后一行，添加一个标记供程序识别：##RESULTS##[序列号1, 序列号2, ...]
+- 如果没有符合的结果，标记为：##RESULTS##[]
+
+⚠️ 重要提醒：
+- 本消息包含 ${chunkImageUrls.length} 张实际图片，请务必查看
+- 不要使用JSON、FILTERED_RESULTS等技术术语
+- 使用自然、口语化的表达方式
+- 让用户能轻松理解分析结果
 
 请开始分析：`;
 
@@ -534,9 +559,25 @@ ${detailedMappingInfo}
         console.log(`🖼️ 第${chunkIndex + 1}批发送图片数量: ${chunkImageUrls.length} 张`);
         console.log(`📊 第${chunkIndex + 1}批图片URL前缀验证: ${chunkImageUrls.map(url => url.substring(0, 30) + '...').join(', ')}`);
 
+        // 最终验证：确保图片、文件名、映射数据三者数量一致
+        console.log(`🔍 最终验证 - 图片:${chunkImageUrls.length} 文件名:${chunkImageNames.length} 映射:${chunkMappingData.length}`);
+        if (chunkImageUrls.length !== chunkImageNames.length || chunkImageUrls.length !== chunkMappingData.length) {
+          console.error(`❌ 数据不一致，跳过本批次处理`);
+          continue;
+        }
+
         // 创建当前批次的消息
         const chunkMessage = createMultimodalMessage(chunkPrompt, chunkImageUrls);
         console.log(`✅ 多模态消息已创建，包含文本和${chunkImageUrls.length}张图片`);
+
+        // 验证消息内容
+        if (chunkMessage.content) {
+          const imageCount = chunkMessage.content.filter(item => item.type === 'image_url').length;
+          console.log(`✅ 消息中实际包含的图片数: ${imageCount}`);
+          if (imageCount !== chunkImageUrls.length) {
+            console.error(`❌ 警告：期望${chunkImageUrls.length}张图片，但消息中只有${imageCount}张！`);
+          }
+        }
 
         // 带重试的批次分析
         const chunkAnalyzeWithRetry = withRetry(async () => {
@@ -558,8 +599,8 @@ ${detailedMappingInfo}
         combinedAnalysis += `\n\n=== 第${chunkIndex + 1}批图片分析结果 ===\n`;
         combinedAnalysis += chunkResponse.content;
 
-        // 提取当前批次的筛选结果
-        const chunkFilteredMatch = chunkResponse.content.match(/FILTERED_RESULTS:\s*\[([\d,\s]*)\]/);
+        // 提取当前批次的筛选结果（新格式：##RESULTS##）
+        const chunkFilteredMatch = chunkResponse.content.match(/##RESULTS##\s*\[([\d,\s]*)\]/);
         let chunkNumbers = [];
         if (chunkFilteredMatch) {
           chunkNumbers = chunkFilteredMatch[1]
@@ -570,7 +611,7 @@ ${detailedMappingInfo}
           console.log(`📊 第 ${chunkIndex + 1} 批筛选结果: [${chunkNumbers.join(', ')}]`);
         }
 
-        // 发送批次完成的WebSocket消息
+        // 发送批次完成的WebSocket消息（发送完整分析结果）
         if (sessionId) {
           const currentProgress = chunkIndex + 1;
           progressManager.sendBatchComplete(sessionId, {
@@ -578,10 +619,11 @@ ${detailedMappingInfo}
             total: totalChunks,
             percent: Math.round((currentProgress / totalChunks) * 100),
             batchIndex: chunkIndex + 1,
-            batchAnalysis: chunkResponse.content.substring(0, 500) + '...', // 发送部分分析结果
+            batchAnalysis: chunkResponse.content, // 发送完整分析结果，不再截断
             batchFilteredResults: chunkNumbers,
             message: `第 ${currentProgress}/${totalChunks} 批处理完成`
           });
+          console.log(`📡 WebSocket已推送第${currentProgress}批完整结果，长度: ${chunkResponse.content.length} 字符`);
         }
 
         // 批次间休息（固定10张/批的优化策略）
@@ -612,7 +654,7 @@ ${detailedMappingInfo}
                 console.log(`🔍 单张处理: ${singleImageName}`);
 
                 // 构建单张图片的提示词
-                const singlePrompt = `${customPrompt.trim()}\n\n🔥 图片信息：\n【图片 1】\n- 文件名: ${singleMapping.fileName}\n- 对应记录序列号: ${singleMapping.serialNumber}\n- 页面名称: ${singleMapping.webpageName}\n- 操作时间: ${singleMapping.triggerTime}\n- 操作类型: ${singleMapping.actionEvent}\n\n✅ 我已经将这张截图发送给你了，请仔细查看图片内容。\n请基于实际图片内容分析是否符合条件，并在结果末尾输出：FILTERED_RESULTS: [序列号]\n\n⚠️ 注意：图片已发送，请务必查看图片内容进行分析。`;
+                const singlePrompt = `${customPrompt.trim()}\n\n🔥 图片信息：\n【图片 1】\n- 文件名: ${singleMapping.fileName}\n- 对应记录序列号: ${singleMapping.serialNumber}\n- 页面名称: ${singleMapping.webpageName}\n- 操作时间: ${singleMapping.triggerTime}\n- 操作类型: ${singleMapping.actionEvent}\n\n✅ 我已经将这张截图发送给你了，请仔细查看图片内容。\n请用友好的语言说明图片是否符合条件，并在最后添加标记：##RESULTS##[序列号]（如不符合则为空数组[]）\n\n⚠️ 注意：图片已发送，请使用自然语言表达，不要使用技术术语。`;
 
                 const singleMessage = createMultimodalMessage(singlePrompt, singleImageUrl);
                 const singleResponse = await model.invoke([singleMessage]);
@@ -621,8 +663,8 @@ ${detailedMappingInfo}
                   combinedAnalysis += `\n\n=== 单张图片分析 (${singleImageName}) ===\n`;
                   combinedAnalysis += singleResponse.content;
 
-                  // 提取筛选结果
-                  const singleFilteredMatch = singleResponse.content.match(/FILTERED_RESULTS:\s*\[([\d,\s]*)\]/);
+                  // 提取筛选结果（新格式：##RESULTS##）
+                  const singleFilteredMatch = singleResponse.content.match(/##RESULTS##\s*\[([\d,\s]*)\]/);
                   if (singleFilteredMatch) {
                     const singleNumbers = singleFilteredMatch[1]
                       .split(',')
@@ -664,8 +706,14 @@ ${detailedMappingInfo}
     console.log(`🔍 去重前: ${allFilteredResults.length} 个结果, 去重后: ${uniqueFilteredResults.length} 个唯一结果`);
     console.log(`📋 最终唯一筛选结果: [${uniqueFilteredResults.join(', ')}]`);
 
-    // 构建最终的AI响应对象
-    const finalAnalysis = `分批AI分析完成 (${totalChunks} 批次)\n\n${combinedAnalysis}\n\n=== 最终汇总结果 ===\nFILTERED_RESULTS: [${uniqueFilteredResults.join(', ')}]`;
+    // 构建最终的AI响应对象（用户友好的格式）
+    let finalSummary = '';
+    if (uniqueFilteredResults.length > 0) {
+      finalSummary = `\n\n=== 📊 搜索结果汇总 ===\n经过对 ${imageUrls.length} 张截图的仔细分析，共有 ${uniqueFilteredResults.length} 条记录符合您的搜索条件：\n序列号：${uniqueFilteredResults.join('、')}\n\n您可以在下方的列表中查看这些记录的详细信息。`;
+    } else {
+      finalSummary = `\n\n=== 📊 搜索结果汇总 ===\n很抱歉，在分析的 ${imageUrls.length} 张截图中，没有找到完全符合您搜索条件的记录。\n建议您尝试调整搜索条件后再次搜索。`;
+    }
+    const finalAnalysis = `${combinedAnalysis}${finalSummary}\n\n##RESULTS##[${uniqueFilteredResults.join(', ')}]`;
 
     const aiResponse = {
       content: finalAnalysis,
