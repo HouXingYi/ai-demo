@@ -52,11 +52,11 @@ const SmartListAnalysisPage: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
-  // 新增：批处理进度状态
+  // 批处理进度状态
   const [batchProgress, setBatchProgress] = useState({
     current: 0,
     total: 0,
-    currentBatchImages: 0,
+    totalRecords: 0, // 总记录数
     status: '' as 'processing' | 'success' | 'error' | '',
     message: '',
     batchResults: [] as string[], // 存储每批次的分析结果
@@ -65,7 +65,6 @@ const SmartListAnalysisPage: React.FC = () => {
   // WebSocket相关状态和引用
   const wsRef = useRef<WebSocket | null>(null);
   const sessionIdRef = useRef<string>('');
-  const [wsConnected, setWsConnected] = useState(false);
 
   // 图片预览相关状态
   const [previewVisible, setPreviewVisible] = useState(false);
@@ -86,7 +85,7 @@ const SmartListAnalysisPage: React.FC = () => {
 
     ws.onopen = () => {
       console.log('✅ WebSocket连接成功');
-      setWsConnected(true);
+      // WebSocket已连接
     };
 
     ws.onmessage = (event) => {
@@ -104,7 +103,7 @@ const SmartListAnalysisPage: React.FC = () => {
               ...prev,
               current: message.current || 0,
               total: message.total || 0,
-              currentBatchImages: message.totalImages || 0,
+              totalRecords: message.totalRecords || 0,
               status: 'processing',
               message: message.message || '处理中...'
             }));
@@ -120,9 +119,10 @@ const SmartListAnalysisPage: React.FC = () => {
               message: message.message || '',
               batchResults: [...prev.batchResults, message.batchAnalysis || '']
             }));
-            // 实时显示中间结果
+            // 实时显示中间结果，添加批次标题
             if (message.batchAnalysis) {
-              setAnalysisResult(prev => prev + '\n\n' + message.batchAnalysis);
+              const batchHeader = `\n\n========== 第 ${message.batchIndex}/${message.total} 批次分析结果 ==========\n`;
+              setAnalysisResult(prev => prev + batchHeader + message.batchAnalysis);
             }
             break;
 
@@ -135,7 +135,9 @@ const SmartListAnalysisPage: React.FC = () => {
               status: 'success',
               message: message.message || '完成！'
             }));
-            setAnalysisResult(message.analysis || '');
+            // 追加最终总结，不清空之前的内容
+            const finalSummary = `\n\n========== 🎉 最终汇总结果 ==========\n经过分析，在 ${message.totalRecords || 0} 条记录中，找到 ${message.matchedCount || 0} 条符合条件的记录。\n\n符合条件的序列号：${message.filteredResults?.join('、') || '无'}\n\n处理时间：${message.processingTime || '未知'}`;
+            setAnalysisResult(prev => prev + finalSummary);
 
             // 提取筛选结果并更新列表
             if (message.filteredResults && message.filteredResults.length > 0) {
@@ -172,12 +174,12 @@ const SmartListAnalysisPage: React.FC = () => {
 
     ws.onerror = (error) => {
       console.error('❌ WebSocket错误:', error);
-      setWsConnected(false);
+      // WebSocket已断开
     };
 
     ws.onclose = () => {
       console.log('🔌 WebSocket连接关闭');
-      setWsConnected(false);
+      // WebSocket已断开
     };
 
     wsRef.current = ws;
@@ -568,7 +570,7 @@ const SmartListAnalysisPage: React.FC = () => {
     setBatchProgress({
       current: 0,
       total: 0,
-      currentBatchImages: 0,
+      totalRecords: 0,
       status: 'processing',
       message: '正在连接...',
       batchResults: [],
@@ -590,77 +592,54 @@ const SmartListAnalysisPage: React.FC = () => {
 
       console.log('API基础URL：', getApiBaseUrl());
 
-      // 筛选有截图的数据记录
-      const recordsWithScreenshots = data.filter(record => record.screenshotFileName);
-      console.log('📷 有截图的记录数量：', recordsWithScreenshots.length);
-      console.log('📋 有截图的记录详情：', recordsWithScreenshots.map(r => ({
-        序号: r.serialNumber,
-        截图文件: r.screenshotFileName,
-        页面: r.webpageName
-      })));
+      // 🎯 新逻辑：准备所有记录数据（包括有图和没图的）
+      const allRecordsData = data.map(record => ({
+        serialNumber: record.serialNumber,
+        webpageName: record.webpageName,
+        webpageUrl: record.webpageUrl,
+        actionEvent: record.actionEvent,
+        triggerTime: record.triggerTime,
+        screenshotFileName: record.screenshotFileName || '',
+        hasImage: !!record.screenshotFileName, // 标记是否有图片
+      }));
 
-      // 构建分析请求
-      const analysisPrompt = `
-作为一个智能操作记录分析助手，请根据以下操作记录列表、对应的截图图片和用户需求进行综合分析：
+      const recordsWithScreenshots = allRecordsData.filter(r => r.hasImage);
+      const recordsWithoutScreenshots = allRecordsData.filter(r => !r.hasImage);
 
-用户需求：${prompt}
+      console.log('📊 记录统计：');
+      console.log(`  - 总记录数：${allRecordsData.length}`);
+      console.log(`  - 有截图：${recordsWithScreenshots.length} 条`);
+      console.log(`  - 无截图：${recordsWithoutScreenshots.length} 条`);
 
-操作记录数据：
-${JSON.stringify(data, null, 2)}
+      // 构建简洁的用户需求提示
+      const analysisPrompt = prompt;
 
-请特别关注有截图的操作记录（共${recordsWithScreenshots.length}条），结合图片内容进行分析。
-请根据用户需求提供详细的分析结果，并明确指出哪些记录符合条件，返回对应的serialNumber列表。
-
-分析要求：
-1. 结合截图内容理解操作的具体场景
-2. 根据用户需求筛选符合条件的操作记录
-3. 用友好、自然的语言总结分析结果
-4. 在最后添加一个隐藏标记供程序识别：##RESULTS##[1, 5, 10, 15]
-`;
-
-      if (recordsWithScreenshots.length > 0) {
+      if (allRecordsData.length > 0) {
         // 如果有截图，使用图片分析API
         const formData = new FormData();
         formData.append('customPrompt', analysisPrompt);
 
-        // 收集所有截图文件（超大批量处理 - 支持100+文件）
+        // 🎯 发送所有记录数据（新逻辑）
+        formData.append('allRecords', JSON.stringify(allRecordsData));
+
+        // 收集有截图的记录的图片文件
         const imageFiles = [];
-        const imageRecordMapping: Array<{
-          imageIndex: number;
-          fileName: string;
-          serialNumber: number;
-          webpageName: string;
-          triggerTime: string;
-          actionEvent: string;
-        }> = []; // 新增：记录图片与数据记录的对应关系
 
-        // 处理所有有截图的记录，不限制数量
-        const recordsToProcess = recordsWithScreenshots;
-        console.log(`开始处理 ${recordsToProcess.length} 条有截图的记录`);
-        console.log(`📊 数据统计: 总记录${data.length}条，有截图${recordsWithScreenshots.length}条`);
-        console.log(`🚀 超大批量模式: 支持大规模图片分析（${recordsToProcess.length}张图片）`);
+        console.log(`📋 准备发送 ${allRecordsData.length} 条记录数据`);
+        console.log(`📷 准备获取 ${recordsWithScreenshots.length} 张截图图片`);
 
-        // 分批获取图片文件，显示进度（增强版错误统计）
+        // 分批获取图片文件，显示进度
         let processedCount = 0;
         let successCount = 0;
         const failedFiles: string[] = [];
 
-        for (const record of recordsToProcess) {
-          console.log(`正在获取图片: ${record.screenshotFileName} (${processedCount + 1}/${recordsToProcess.length})`);
+        for (const record of recordsWithScreenshots) {
+          console.log(`正在获取图片: ${record.screenshotFileName} (${processedCount + 1}/${recordsWithScreenshots.length})`);
           try {
             const imageFile = await getImageFile(record.screenshotFileName);
             if (imageFile) {
               formData.append('images', imageFile);
               imageFiles.push(record.screenshotFileName);
-              // 新增：记录图片与数据记录的对应关系
-              imageRecordMapping.push({
-                imageIndex: successCount,
-                fileName: record.screenshotFileName,
-                serialNumber: record.serialNumber,
-                webpageName: record.webpageName,
-                triggerTime: record.triggerTime,
-                actionEvent: record.actionEvent
-              });
               successCount++;
               console.log(`✅ 成功获取图片: ${record.screenshotFileName}, 序列号: ${record.serialNumber}, 大小: ${imageFile.size} bytes`);
             } else {
@@ -673,7 +652,7 @@ ${JSON.stringify(data, null, 2)}
           }
 
           processedCount++;
-          console.log(`📈 获取进度: ${processedCount}/${recordsToProcess.length} (${Math.round(processedCount / recordsToProcess.length * 100)}%) - 成功: ${successCount}, 失败: ${failedFiles.length}`);
+          console.log(`📈 获取进度: ${processedCount}/${recordsWithScreenshots.length} (${Math.round(processedCount / recordsWithScreenshots.length * 100)}%) - 成功: ${successCount}, 失败: ${failedFiles.length}`);
 
           // 添加短暂延迟，避免过快的文件访问
           if (processedCount % 5 === 0) {
@@ -682,68 +661,26 @@ ${JSON.stringify(data, null, 2)}
         }
 
         // 显示详细的处理结果统计
-        console.log(`📊 图片处理完成统计:`);
-        console.log(`  📋 数据记录中有截图: ${recordsToProcess.length} 条`);
-        console.log(`  ✅ 成功获取并验证: ${successCount} 个文件`);
-        console.log(`  ❌ 失败或无效: ${failedFiles.length} 个文件`);
-        console.log(`  📤 实际发送给AI: ${imageFiles.length} 张图片`);
+        console.log(`📊 数据准备完成统计:`);
+        console.log(`  📋 发送记录总数: ${allRecordsData.length} 条`);
+        console.log(`  📷 有截图记录: ${recordsWithScreenshots.length} 条`);
+        console.log(`  ✅ 成功获取图片: ${successCount} 张`);
+        console.log(`  ❌ 失败或无效: ${failedFiles.length} 张`);
         if (failedFiles.length > 0) {
           console.log(`  📋 失败文件列表:`, failedFiles);
         }
 
-        console.log(`📊 最终统计: 尝试处理 ${recordsToProcess.length} 条记录，成功获取 ${imageFiles.length} 张有效图片`);
-        console.log(`📦 WebSocket将接收后端实时进度更新（每批10张）`);
+        // 发送sessionId用于WebSocket通信
+        formData.append('sessionId', sessionId);
 
-        // 新增：特别验证序列号97的映射（用于调试）
-        const serial97Mapping = imageRecordMapping.find(m => m.serialNumber === 97);
-        if (serial97Mapping) {
-          console.log(`🎯 序列号97的映射验证:`);
-          console.log(`  - 文件名: ${serial97Mapping.fileName}`);
-          console.log(`  - 图片索引: ${serial97Mapping.imageIndex}`);
-          console.log(`  - 页面名称: ${serial97Mapping.webpageName}`);
-          console.log(`  - 操作时间: ${serial97Mapping.triggerTime}`);
-        } else {
-          console.log(`⚠️ 未找到序列号97的映射信息`);
-        }
+        console.log(`\n=== 前端：发送给后端的请求数据 ===`);
+        console.log(`🔗 请求URL: ${getApiBaseUrl()}/api/ai/analyze-multi-images`);
+        console.log(`📋 记录总数: ${allRecordsData.length} 条`);
+        console.log(`📷 图片文件数量: ${imageFiles.length} 张`);
+        console.log(`🔑 Session ID: ${sessionId}`);
+        console.log(`📝 用户需求: ${analysisPrompt}`);
 
-        if (imageFiles.length > 0) {
-          // 新增：将图片与记录的对应关系信息发送给后端
-          formData.append('imageRecordMapping', JSON.stringify(imageRecordMapping));
-          // 新增：发送sessionId用于WebSocket通信
-          formData.append('sessionId', sessionId);
-
-          console.log(`🚀 发送请求到: ${getApiBaseUrl()}/api/ai/analyze-multi-images`);
-          console.log(`📦 FormData包含: ${imageFiles.length} 个图片文件`);
-
-          // 打印详细的请求数据
-          console.log('\n=== 前端：发送给后端的请求数据 ===');
-          console.log('🔗 请求URL:', `${getApiBaseUrl()}/api/ai/analyze-multi-images`);
-          console.log('📝 请求方法: POST');
-          console.log('📋 Content-Type: multipart/form-data');
-          console.log('📊 FormData 详细内容:');
-          console.log(`  - customPrompt: "${analysisPrompt.substring(0, 200)}..."`);
-          console.log(`  - 图片文件数量: ${imageFiles.length}`);
-          console.log(`  - 图片记录映射: ${imageRecordMapping.length} 条`);
-          console.log(`  - 图片文件列表:`);
-          imageFiles.forEach((fileName, index) => {
-            const mapping = imageRecordMapping[index];
-            console.log(`    ${index + 1}. ${fileName} (序列号: ${mapping?.serialNumber}, 页面: ${mapping?.webpageName})`);
-          });
-
-          // 新增：详细的映射关系验证
-          console.log('\n🔍 图片与记录映射关系验证:');
-          imageRecordMapping.forEach((mapping, index) => {
-            console.log(`图片${index + 1}: ${mapping.fileName} ↔ 序列号${mapping.serialNumber} (${mapping.webpageName})`);
-          });
-
-          // 新增：检查是否有重复的序列号
-          const serialNumbers = imageRecordMapping.map(m => m.serialNumber);
-          const duplicates = serialNumbers.filter((item, index) => serialNumbers.indexOf(item) !== index);
-          if (duplicates.length > 0) {
-            console.warn('⚠️ 发现重复的序列号:', duplicates);
-          } else {
-            console.log('✅ 所有序列号都是唯一的');
-          }
+        if (allRecordsData.length > 0) {
           console.log('=== 前端请求数据结束 ===\n');
 
           console.log('formData', formData);
@@ -945,10 +882,7 @@ ${JSON.stringify(data, null, 2)}
                   <div>
                     <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div>
-                        <Text strong>正在实时分析图片...</Text>
-                        {/* <Text type="secondary" style={{ marginLeft: 8 }}>
-                          {wsConnected ? '🟢 WebSocket已连接' : '🔴 连接中...'}
-                        </Text> */}
+                        <Text strong>正在实时分析记录...</Text>
                       </div>
                       <Text type="secondary">
                         批次 {batchProgress.current}/{batchProgress.total}
@@ -968,8 +902,8 @@ ${JSON.stringify(data, null, 2)}
                     />
                     <div style={{ marginTop: 8, fontSize: 12 }}>
                       <Space split="|" style={{ width: '100%', justifyContent: 'space-between' }}>
-                        <span>📷 总共 {batchProgress.currentBatchImages} 张图片</span>
-                        <span>📦 每批10张 (固定策略)</span>
+                        <span>📋 总共 {batchProgress.totalRecords} 条记录</span>
+                        <span>📦 每批20条 (固定策略)</span>
                         <span style={{ color: '#1890ff' }}>✨ {batchProgress.message || '处理中...'}</span>
                       </Space>
                     </div>

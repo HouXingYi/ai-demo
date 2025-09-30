@@ -141,36 +141,38 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
       });
     }
 
-    const { customPrompt = '', imageRecordMapping = '[]', sessionId = '' } = req.body;
+    const { customPrompt = '', sessionId = '' } = req.body;
     console.log('自定义提示词长度:', customPrompt.length);
     console.log('提示词预览:', customPrompt.substring(0, 100) + '...');
     console.log('WebSocket会话ID:', sessionId || '未提供');
 
-    // 解析图片与记录的对应关系
-    let mappingData = [];
+    // 解析所有记录数据（包括有图片和没图片的）
+    const { allRecords } = req.body;
+    let recordsData = [];
     try {
-      mappingData = JSON.parse(imageRecordMapping);
-      console.log('图片记录映射数量:', mappingData.length);
+      recordsData = JSON.parse(allRecords);
+      console.log('📊 接收到的记录总数:', recordsData.length);
+      console.log('📷 接收到的图片文件数:', req.files?.length || 0);
 
-      // 验证映射数据的完整性
-      console.log('🔍 映射数据验证:');
-      mappingData.forEach((mapping, index) => {
-        console.log(`  映射${index + 1}: 序列号${mapping.serialNumber} - ${mapping.fileName} - ${mapping.webpageName}`);
+      // 统计有图片和没图片的记录数量
+      const recordsWithImages = recordsData.filter(r => r.hasImage);
+      const recordsWithoutImages = recordsData.filter(r => !r.hasImage);
+      console.log(`  - 有截图的记录: ${recordsWithImages.length} 条`);
+      console.log(`  - 无截图的记录: ${recordsWithoutImages.length} 条`);
 
-        // 检查必要字段
-        if (!mapping.serialNumber || !mapping.fileName) {
-          console.error(`❌ 映射${index + 1}缺少必要字段:`, mapping);
-        }
+      // 验证记录数据的完整性
+      console.log('🔍 前5条记录数据验证:');
+      recordsData.slice(0, 5).forEach((record, index) => {
+        console.log(`  记录${index + 1}: 序列号${record.serialNumber} - ${record.webpageName} - 截图:${record.hasImage ? '✅' : '❌'}`);
       });
-
-      // 验证映射数量与图片数量是否一致
-      if (mappingData.length !== req.files.length) {
-        console.warn(`⚠️ 映射数量(${mappingData.length})与图片数量(${req.files.length})不一致`);
-      } else {
-        console.log('✅ 映射数量与图片数量一致');
-      }
     } catch (error) {
-      console.warn('解析图片记录映射失败:', error);
+      console.error('❌ 解析记录数据失败:', error);
+      isProcessing = false;
+      return res.status(400).json({
+        success: false,
+        error: '解析记录数据失败',
+        framework: 'LangChain.js'
+      });
     }
 
     // 检查是否提供了自定义提示词
@@ -184,19 +186,16 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
       });
     }
 
-    // 处理多张图片（超大批量优化版 - 支持100+文件）
-    console.log('📷 开始处理图片文件...');
-    const imageUrls = [];
-    const imageNames = [];
-    const processedMappingData = []; // 新增：只包含成功处理图片的映射数据
+    // 处理图片文件，构建文件名到Base64的映射
+    console.log('📷 开始处理图片文件，构建图片映射...');
+    const imageFileMap = new Map(); // 文件名 -> Base64图片数据
     const batchSize = 15; // 优化批处理大小，平衡性能和稳定性
     let totalProcessed = 0;
 
     // 支持大批量处理，不限制文件数量
-    const filesToProcess = req.files;
+    const filesToProcess = req.files || [];
 
-    console.log(`🚀 超大批量处理模式: ${filesToProcess.length} 个文件，每批处理 ${batchSize} 个`);
-    console.log(`💪 支持大规模图片分析，预计处理时间: ${Math.ceil(filesToProcess.length / batchSize) * 2}秒`);
+    console.log(`🚀 图片文件处理: ${filesToProcess.length} 个文件`);
 
     // 分批处理文件以优化内存使用
     for (let i = 0; i < filesToProcess.length; i += batchSize) {
@@ -257,25 +256,8 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
 
           const imageUrl = `data:${mimeType};base64,${base64Image}`;
 
-          imageUrls.push(imageUrl);
-          imageNames.push(file.originalname);
-
-          // 查找对应的映射数据（通过文件名匹配）
-          const correspondingMapping = mappingData.find(mapping => mapping.fileName === file.originalname);
-          if (correspondingMapping) {
-            processedMappingData.push(correspondingMapping);
-            console.log(`✅ 图片映射匹配: ${file.originalname} → 序列号${correspondingMapping.serialNumber}`);
-          } else {
-            console.warn(`⚠️ 未找到图片 ${file.originalname} 的映射数据`);
-            // 创建一个默认映射
-            processedMappingData.push({
-              fileName: file.originalname,
-              serialNumber: 'unknown',
-              webpageName: 'unknown',
-              triggerTime: 'unknown',
-              actionEvent: 'unknown'
-            });
-          }
+          // 将图片存储到Map中，key是文件名
+          imageFileMap.set(file.originalname, imageUrl);
 
           totalProcessed++;
 
@@ -323,535 +305,295 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
       }
     }
 
-    console.log(`📊 总共成功处理了 ${imageUrls.length} 张图片，跳过了 ${req.files.length - imageUrls.length} 张`);
-    console.log(`🔍 映射数据验证: 图片${imageUrls.length}张，映射${processedMappingData.length}条`);
+    console.log(`📊 图片处理完成: 总共 ${imageFileMap.size} 张图片成功加载到内存`);
+    console.log(`📋 记录数据: 总共 ${recordsData.length} 条记录待分析`);
 
-    // 验证映射数据的一致性
-    if (imageUrls.length !== processedMappingData.length) {
-      console.error(`❌ 映射数据不一致: 图片${imageUrls.length}张 vs 映射${processedMappingData.length}条`);
-    } else {
-      console.log('✅ 图片与映射数据数量一致');
-      // 显示前5个映射关系作为验证
-      processedMappingData.slice(0, 5).forEach((mapping, index) => {
-        console.log(`  ${index + 1}. ${imageNames[index]} → 序列号${mapping.serialNumber}`);
-      });
-      if (processedMappingData.length > 5) {
-        console.log(`  ... 还有 ${processedMappingData.length - 5} 个映射`);
-      }
+    // 显示前5个图片映射
+    const imageMapKeys = Array.from(imageFileMap.keys());
+    console.log('🔍 前5个图片文件映射:');
+    imageMapKeys.slice(0, 5).forEach((fileName, index) => {
+      console.log(`  ${index + 1}. ${fileName}`);
+    });
+    if (imageMapKeys.length > 5) {
+      console.log(`  ... 还有 ${imageMapKeys.length - 5} 个图片`);
     }
 
-    // 检查是否有有效的图片数据
-    if (imageUrls.length === 0) {
-      console.error('❌ 没有成功处理任何图片文件');
+    // 检查是否有记录数据
+    if (recordsData.length === 0) {
+      console.error('❌ 没有接收到任何记录数据');
       isProcessing = false;
       return res.status(400).json({
         success: false,
-        error: '没有有效的图片文件可以分析',
+        error: '没有记录数据可以分析',
         framework: 'LangChain.js'
       });
     }
 
-    // 构建严格的一一对应分析提示词
-    let enhancedPrompt = customPrompt.trim();
+    // 🎯 按记录分批处理（每批20条记录）
+    console.log('🤖 开始按记录分批AI分析...');
+    const recordBatchSize = 20; // 每批20条记录
+    const totalRecordBatches = Math.ceil(recordsData.length / recordBatchSize);
 
-    if (mappingData.length > 0) {
-      // 为每张图片构建详细的对应关系说明
-      const detailedMappingInfo = mappingData.map((mapping, index) => {
-        return `
-【图片 ${index + 1}】
-- 文件名: ${mapping.fileName}
-- 对应记录序列号: ${mapping.serialNumber}
-- 页面名称: ${mapping.webpageName}
-- 操作时间: ${mapping.triggerTime}
-- 操作类型: ${mapping.actionEvent}
-- 页面URL: 请从原始数据中查找序列号${mapping.serialNumber}对应的URL信息`;
-      }).join('\n');
+    console.log(`📊 分批策略: ${recordsData.length} 条记录，分为 ${totalRecordBatches} 批，每批 ${recordBatchSize} 条`);
 
-      enhancedPrompt += `
-
-🔥 重要说明：图片与数据记录的严格对应关系
-${detailedMappingInfo}
-
-📋 严格的分析要求：
-1. 🎯 图片顺序对应关系：
-   - 我发送给你的图片顺序严格按照上述映射列表排列
-   - 第1张图片 = 映射列表中的【图片 1】
-   - 第2张图片 = 映射列表中的【图片 2】
-   - 以此类推，绝对不能错位！
-
-2. 📝 分析输出格式：
-   请为每张图片按以下格式输出：
-   
-   ===== 序列号${mappingData.length > 0 ? mappingData[0].serialNumber : 'X'}的图片分析 =====
-   对应文件: ${mappingData.length > 0 ? mappingData[0].fileName : 'filename.webp'}
-   图片内容: [详细描述你在这张图片中看到的所有内容]
-   页面类型: [判断这是什么类型的页面，如登录页、商品页、设置页等]
-   主要元素: [列出页面中的主要UI元素和文字]
-   操作匹配度: [分析图片内容是否与记录的操作类型"${mappingData.length > 0 ? mappingData[0].actionEvent : 'operation'}"匹配]
-   
-   ===== 序列号${mappingData.length > 1 ? mappingData[1].serialNumber : 'Y'}的图片分析 =====
-   对应文件: ${mappingData.length > 1 ? mappingData[1].fileName : 'filename.webp'}
-   [继续按相同格式分析...]
-
-3. 🔍 筛选判断：
-   根据用户的搜索需求和每张图片的实际内容，判断哪些记录符合条件
-
-4. 📊 最终输出：
-   在所有图片分析完成后，输出符合条件的序列号列表：
-   FILTERED_RESULTS: [序列号1, 序列号2, ...]
-
-⚠️ 关键提醒：图片与序列号的对应关系是固定的，请严格按照映射关系进行分析，确保分析结果的准确性！`;
-    }
-
-    console.log('🤖 开始AI分析...');
-    console.log('使用严格对应的增强提示词进行多图片分析');
-    console.log('图片映射信息条数:', mappingData.length);
-
-    // 使用配置模块创建多模态模型（大批量优化 - kimi-latest）
-    console.log('⚙️ 创建AI模型（大批量处理优化）...');
+    // 创建AI模型（优化参数以支持大批量图片分析）
     const model = createChatModel({
-      modelName: "kimi-latest", // 明确指定使用kimi-latest
-      temperature: 0.7,
-      maxTokens: imageUrls.length > 50 ? 4000 : 2000, // kimi-latest的合理token限制
-      timeout: imageUrls.length > 100 ? 300000 : 120000 // 超大批量时增加超时时间（5分钟）
+      modelName: "kimi-latest",
+      temperature: 0.1, // 降低温度，提高准确性和一致性（0.1更严格，减少幻觉）
+      maxTokens: 640000, // 大幅增加token限制，支持20条记录的超详细分析
+      timeout: 300000 // 5分钟，给AI更多处理时间
     });
-    console.log(`✅ AI模型创建成功 (kimi-latest)，配置: maxTokens=${imageUrls.length > 50 ? 4000 : 2000}, timeout=${imageUrls.length > 100 ? 300 : 120}秒`);
+    console.log('✅ AI模型创建成功 (kimi-latest, temperature=0.1, maxTokens=32000, 每批20条记录)');
 
-    // 使用配置模块创建多模态消息
-    console.log('📝 创建多模态消息...');
-    const message = createMultimodalMessage(enhancedPrompt, imageUrls);
-    console.log('✅ 多模态消息创建成功');
-
-    // 打印详细的AI请求数据
-    console.log('\n=== 后端：发送给AI接口的数据 ===');
-    console.log('🤖 AI模型配置 (kimi-latest):');
-    console.log('  - model: kimi-latest');
-    console.log('  - temperature: 0.7');
-    console.log('  - maxTokens:', imageUrls.length > 50 ? 4000 : 2000);
-    console.log('📝 提示词信息:');
-    console.log(`  - 原始提示词长度: ${customPrompt.length} 字符`);
-    console.log(`  - 增强提示词长度: ${enhancedPrompt.length} 字符`);
-    console.log(`  - 提示词内容: "${enhancedPrompt.substring(0, 300)}..."`);
-    console.log('🖼️ 图片信息:');
-    console.log(`  - 图片数量: ${imageUrls.length} 张`);
-    console.log(`  - 图片格式统计:`);
-    const formatStats = {};
-    imageUrls.forEach((url, index) => {
-      const format = url.split(';')[0].split('/')[1];
-      formatStats[format] = (formatStats[format] || 0) + 1;
-      if (index < 10) {
-        console.log(`    ${index + 1}. ${imageNames[index]} (${format})`);
-      }
-    });
-    if (imageUrls.length > 10) {
-      console.log(`    ... 还有 ${imageUrls.length - 10} 张图片`);
-    }
-    Object.keys(formatStats).forEach(format => {
-      console.log(`  - ${format}: ${formatStats[format]} 张`);
-    });
-    console.log(`📊 Base64数据统计:`);
-    const totalSize = imageUrls.reduce((sum, url) => sum + url.length, 0);
-    console.log(`  - 总Base64长度: ${totalSize} 字符`);
-    console.log(`  - 平均每张: ${Math.round(totalSize / imageUrls.length)} 字符`);
-    console.log('=== 后端AI请求数据结束 ===\n');
-
-    // 分批AI处理策略 - 解决RIFF错误的根本方案
-    console.log('🔄 开始分批AI分析（RIFF错误解决方案）...');
-    console.log(`📊 准备分析 ${imageUrls.length} 张图片，Base64总大小: ${Math.round(imageUrls.reduce((sum, url) => sum + url.length, 0) / 1024 / 1024)}MB`);
-
-    // 固定每批10张图片处理（优化后的稳定策略）
-    const aiChunkSize = 10; // 固定每批10张，确保稳定性和映射准确性
-    const totalChunks = Math.ceil(imageUrls.length / aiChunkSize);
-
-    console.log(`🎯 固定分批AI处理策略: ${totalChunks} 批，每批最多 ${aiChunkSize} 张图片`);
-    console.log(`⚡ 优化策略: 固定10张/批，确保数据映射准确性和处理稳定性`);
-
-    // 发送初始进度（如果提供了sessionId）
+    // 发送初始进度
     if (sessionId) {
       progressManager.sendProgress(sessionId, {
         current: 0,
-        total: totalChunks,
+        total: totalRecordBatches,
         percent: 0,
-        message: '开始分批处理图片...',
-        totalImages: imageUrls.length
+        message: '开始分批处理记录...',
+        totalRecords: recordsData.length
       });
     }
 
-    let combinedAnalysis = '';
     let allFilteredResults = [];
-
     const startTime = Date.now();
 
-    // 分批处理图片
-    for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
-      const startIdx = chunkIndex * aiChunkSize;
-      const endIdx = Math.min(startIdx + aiChunkSize, imageUrls.length);
-      const chunkImageUrls = imageUrls.slice(startIdx, endIdx);
-      const chunkImageNames = imageNames.slice(startIdx, endIdx);
-      const chunkMappingData = processedMappingData.slice(startIdx, endIdx);
+    // 按记录分批处理
+    for (let batchIndex = 0; batchIndex < totalRecordBatches; batchIndex++) {
+      const startIdx = batchIndex * recordBatchSize;
+      const endIdx = Math.min(startIdx + recordBatchSize, recordsData.length);
+      const batchRecords = recordsData.slice(startIdx, endIdx);
 
-      console.log(`\n📦 处理第 ${chunkIndex + 1}/${totalChunks} 批图片 (${chunkImageUrls.length} 张)`);
-      console.log(`📋 当前批次图片: ${chunkImageNames.join(', ')}`);
+      console.log(`\n📦 处理第 ${batchIndex + 1}/${totalRecordBatches} 批记录 (序列号 ${batchRecords[0].serialNumber}-${batchRecords[batchRecords.length - 1].serialNumber})`);
 
-      // 严格验证：图片数量必须与映射数据一致
-      if (chunkImageUrls.length !== chunkMappingData.length) {
-        console.error(`❌ 严重错误：第 ${chunkIndex + 1} 批图片数量(${chunkImageUrls.length})与映射数据(${chunkMappingData.length})不一致！`);
-        console.error(`图片: ${chunkImageNames.join(', ')}`);
-        console.error(`映射: ${chunkMappingData.map(m => m.fileName).join(', ')}`);
+      // 发送批次开始进度
+      if (sessionId) {
+        progressManager.sendProgress(sessionId, {
+          current: batchIndex,
+          total: totalRecordBatches,
+          percent: Math.round((batchIndex / totalRecordBatches) * 100),
+          message: `正在分析第 ${batchIndex + 1}/${totalRecordBatches} 批记录（序列号 ${batchRecords[0].serialNumber}-${batchRecords[batchRecords.length - 1].serialNumber}）`,
+          totalRecords: recordsData.length
+        });
       }
 
-      // 如果这批次没有图片，跳过
-      if (chunkImageUrls.length === 0) {
-        console.warn(`⚠️ 第 ${chunkIndex + 1} 批没有图片，跳过处理`);
-        continue;
-      }
+      // 为当前批次构建提示词和图片
+      const batchImages = [];
+      const recordsInfo = batchRecords.map((record, idx) => {
+        let imageInfo = '';
+        if (record.hasImage && record.screenshotFileName && imageFileMap.has(record.screenshotFileName)) {
+          // 有图片，添加到批次图片列表
+          batchImages.push(imageFileMap.get(record.screenshotFileName));
+          imageInfo = `✅ 有截图（已附带图片${batchImages.length}）`;
+        } else {
+          imageInfo = '❌ 无截图';
+        }
 
-      // 验证当前批次的映射数据
-      console.log(`🔍 当前批次映射验证:`);
-      chunkMappingData.forEach((mapping, idx) => {
-        console.log(`  批次内${idx + 1}: ${chunkImageNames[idx]} → 序列号${mapping.serialNumber}`);
+        return `【记录 ${idx + 1}】序列号：${record.serialNumber}
+- 页面名称：${record.webpageName}
+- 页面URL：${record.webpageUrl || '无'}
+- 操作类型：${record.actionEvent}
+- 触发时间：${record.triggerTime}
+- 截图状态：${imageInfo}`;
+      }).join('\n\n');
+
+      // 提取所有序列号用于提示词
+      const serialNumbers = batchRecords.map(r => r.serialNumber);
+      const batchPrompt = `你是一个专业的操作记录分析助手。用户的搜索需求是："${customPrompt.trim()}"
+
+我将为你提供 ${batchRecords.length} 条操作记录（序列号：${serialNumbers.join('、')}），其中一些记录有对应的网页截图。
+
+📋 操作记录详情：
+${recordsInfo}
+
+🎯 严格分析要求：
+1. **精确匹配原则**：只有当记录内容**明确、清晰地符合**用户搜索需求时，才能标记为符合
+   - 例如：用户搜索"库存页输入34.89"，只有截图中**真实显示库存页面且明确可见34.89这个数字**的记录才符合
+   - 不要基于推测、猜测或部分相似就标记为符合
+   - 宁可漏掉也不要误判
+
+2. **有截图的记录**：
+   - 仔细查看截图中的**实际内容**：页面标题、输入框的值、按钮文字、表格数据等
+   - 必须能在截图中**直接看到**用户搜索的关键信息
+   - 如果截图模糊、看不清楚，或者只是相似但不完全匹配，应标记为不符合
+
+3. **无截图的记录**：
+   - 仅基于页面名称、URL、操作类型等文本信息判断
+   - 如果信息不足以确认，应明确说明"无截图，无法确认"
+   - **不要**仅凭页面名称相似就判定为符合
+
+4. **序列号规则**：
+   - 每条记录都有唯一的序列号（${serialNumbers[0]}、${serialNumbers[1] || serialNumbers[0]}等）
+   - 必须使用**实际序列号**，不要使用顺序编号（1、2、3）
+
+5. **输出格式**：
+   每条记录格式："序列号X：[是否符合及详细原因]"
+   - ✅ 符合：明确说明在截图中看到了什么具体内容
+   - ❌ 不符合：说明为什么不符合
+   - ⚠️ 无法确认：说明信息不足
+
+6. **最终标记**：##RESULTS##[符合条件的序列号数组]
+   - 只包含**确实符合**的序列号
+   - 有任何疑问的都不要加入
+
+📝 输出示例：
+序列号${serialNumbers[0]}：有截图，但页面显示的是登录界面，未看到"库存"或"34.89"相关内容，不符合
+序列号${serialNumbers[1] || serialNumbers[0]}：有截图，页面标题显示"Manage Your Inventory"（库存管理），且在输入框中明确看到"34.89"数值，完全符合搜索条件 ✓
+序列号${serialNumbers[2] || serialNumbers[0]}：无截图，无法确认是否包含用户搜索的内容
+
+##RESULTS##[${serialNumbers[1] || serialNumbers[0]}]
+
+⚠️ 重要：请严格遵守"精确匹配原则"，宁可少报也不要误报！
+
+现在请开始分析：`;
+
+      console.log(`📋 当前批次: ${batchRecords.length} 条记录，${batchImages.length} 张图片`);
+      console.log(`🔢 本批次实际序列号: ${serialNumbers.join('、')}`);
+      batchRecords.forEach((r, i) => {
+        console.log(`  ${i + 1}. 序列号${r.serialNumber} - ${r.webpageName} - 截图:${r.hasImage ? '✅' : '❌'}`);
       });
 
       try {
-        // 为当前批次构建提示词（保留用户搜索需求）
-        let chunkPrompt = `${customPrompt.trim()}\n\n`;
+        // 创建多模态消息
+        const message = createMultimodalMessage(batchPrompt, batchImages);
 
-        if (chunkMappingData.length > 0) {
-          const chunkMappingInfo = chunkMappingData.map((mapping, index) => {
-            return `
-【图片 ${index + 1}】
-- 文件名: ${mapping.fileName}
-- 对应记录序列号: ${mapping.serialNumber}
-- 页面名称: ${mapping.webpageName}
-- 操作时间: ${mapping.triggerTime}
-- 操作类型: ${mapping.actionEvent}`;
-          }).join('\n');
+        // 验证消息中的图片数量
+        const imageCount = Array.isArray(message.content)
+          ? message.content.filter(c => c.type === 'image_url').length
+          : 0;
+        console.log(`📸 实际发送给AI的图片数量: ${imageCount}`);
 
-          chunkPrompt += `🔥 当前批次图片信息：\n${chunkMappingInfo}\n\n`;
-        }
+        // 详细日志：打印消息结构
+        console.log(`📋 消息结构:`, JSON.stringify({
+          contentLength: message.content?.length,
+          contentTypes: message.content?.map(c => c.type),
+          promptLength: batchPrompt.length,
+          imageUrlPrefixes: batchImages.map(url => url.substring(0, 50) + '...')
+        }, null, 2));
 
-        chunkPrompt += `📋 分析要求：
-1. ✅ 我已经将 ${chunkImageUrls.length} 张截图图片随本消息一起发送给你了
-2. 📊 图片详情：${chunkMappingData.map((m, i) => `第${i + 1}张(序列号${m.serialNumber})`).join(', ')}
-3. 这是第${chunkIndex + 1}批图片（共${totalChunks}批）
-4. 请根据用户需求："${customPrompt.trim()}"来分析我发送的这${chunkImageUrls.length}张图片的实际内容
-5. 请严格按照图片顺序分析，第1张图片对应【图片 1】的信息
-6. 请务必查看图片的实际内容（页面截图、文字、UI元素等）来判断是否符合条件
+        // 调用AI分析
+        console.log(`🚀 发送第 ${batchIndex + 1} 批数据给AI...`);
+        const retryFn = withRetry(async () => await model.invoke([message]));
+        const response = await retryFn();
 
-📝 输出格式要求：
-- 请用自然、友好的语言描述每张图片的内容
-- 说明每张图片是否符合用户需求，以及原因
-- 在分析的最后，用口语化的方式总结，例如：
-  "经过分析，序列号9和序列号131的截图符合您的搜索条件。"
-  或者 "很遗憾，本批次的截图都不符合您的搜索要求。"
-- 在总结的最后一行，添加一个标记供程序识别：##RESULTS##[序列号1, 序列号2, ...]
-- 如果没有符合的结果，标记为：##RESULTS##[]
-
-⚠️ 重要提醒：
-- 本消息包含 ${chunkImageUrls.length} 张实际图片，请务必查看
-- 不要使用JSON、FILTERED_RESULTS等技术术语
-- 使用自然、口语化的表达方式
-- 让用户能轻松理解分析结果
-
-请开始分析：`;
-
-        console.log(`📝 第${chunkIndex + 1}批提示词长度: ${chunkPrompt.length} 字符`);
-        console.log(`🖼️ 第${chunkIndex + 1}批发送图片数量: ${chunkImageUrls.length} 张`);
-        console.log(`📊 第${chunkIndex + 1}批图片URL前缀验证: ${chunkImageUrls.map(url => url.substring(0, 30) + '...').join(', ')}`);
-
-        // 最终验证：确保图片、文件名、映射数据三者数量一致
-        console.log(`🔍 最终验证 - 图片:${chunkImageUrls.length} 文件名:${chunkImageNames.length} 映射:${chunkMappingData.length}`);
-        if (chunkImageUrls.length !== chunkImageNames.length || chunkImageUrls.length !== chunkMappingData.length) {
-          console.error(`❌ 数据不一致，跳过本批次处理`);
+        if (!response || !response.content) {
+          console.error(`❌ 第 ${batchIndex + 1} 批AI响应为空`);
+          console.error(`🔍 响应详情:`, {
+            hasResponse: !!response,
+            responseKeys: response ? Object.keys(response) : [],
+            responseType: typeof response,
+            content: response?.content
+          });
           continue;
         }
 
-        // 创建当前批次的消息
-        const chunkMessage = createMultimodalMessage(chunkPrompt, chunkImageUrls);
-        console.log(`✅ 多模态消息已创建，包含文本和${chunkImageUrls.length}张图片`);
+        const batchAnalysis = response.content;
+        console.log(`✅ 第 ${batchIndex + 1} 批分析完成`);
+        console.log(`📄 分析结果长度: ${batchAnalysis.length} 字符`);
+        console.log(`📄 分析结果预览: ${batchAnalysis.substring(0, 200)}...`);
 
-        // 验证消息内容
-        if (chunkMessage.content) {
-          const imageCount = chunkMessage.content.filter(item => item.type === 'image_url').length;
-          console.log(`✅ 消息中实际包含的图片数: ${imageCount}`);
-          if (imageCount !== chunkImageUrls.length) {
-            console.error(`❌ 警告：期望${chunkImageUrls.length}张图片，但消息中只有${imageCount}张！`);
-          }
-        }
-
-        // 带重试的批次分析
-        const chunkAnalyzeWithRetry = withRetry(async () => {
-          console.log(`🚀 正在分析第 ${chunkIndex + 1} 批图片...`);
-          const response = await model.invoke([chunkMessage]);
-
-          if (!response || !response.content) {
-            throw new Error('AI响应为空或无效');
-          }
-
-          return response;
-        }, 2, 2000);
-
-        const chunkResponse = await chunkAnalyzeWithRetry();
-
-        console.log(`✅ 第 ${chunkIndex + 1} 批分析完成，响应长度: ${chunkResponse.content.length} 字符`);
-
-        // 合并分析结果
-        combinedAnalysis += `\n\n=== 第${chunkIndex + 1}批图片分析结果 ===\n`;
-        combinedAnalysis += chunkResponse.content;
-
-        // 提取当前批次的筛选结果（新格式：##RESULTS##）
-        const chunkFilteredMatch = chunkResponse.content.match(/##RESULTS##\s*\[([\d,\s]*)\]/);
-        let chunkNumbers = [];
-        if (chunkFilteredMatch) {
-          chunkNumbers = chunkFilteredMatch[1]
+        // 提取筛选结果
+        const resultsMatch = batchAnalysis.match(/##RESULTS##\s*\[([\d,\s]*)\]/);
+        if (resultsMatch) {
+          const batchResults = resultsMatch[1]
             .split(',')
             .map(n => parseInt(n.trim()))
             .filter(n => !isNaN(n));
-          allFilteredResults.push(...chunkNumbers);
-          console.log(`📊 第 ${chunkIndex + 1} 批筛选结果: [${chunkNumbers.join(', ')}]`);
+
+          allFilteredResults.push(...batchResults);
+          console.log(`🎯 本批次符合条件的序列号: ${batchResults.join(', ') || '无'}`);
         }
 
-        // 发送批次完成的WebSocket消息（发送完整分析结果）
+        // 发送批次完成消息
         if (sessionId) {
-          const currentProgress = chunkIndex + 1;
           progressManager.sendBatchComplete(sessionId, {
-            current: currentProgress,
-            total: totalChunks,
-            percent: Math.round((currentProgress / totalChunks) * 100),
-            batchIndex: chunkIndex + 1,
-            batchAnalysis: chunkResponse.content, // 发送完整分析结果，不再截断
-            batchFilteredResults: chunkNumbers,
-            message: `第 ${currentProgress}/${totalChunks} 批处理完成`
+            current: batchIndex + 1,
+            total: totalRecordBatches,
+            batchIndex: batchIndex + 1,
+            batchAnalysis: batchAnalysis,
+            recordRange: `${batchRecords[0].serialNumber}-${batchRecords[batchRecords.length - 1].serialNumber}`
           });
-          console.log(`📡 WebSocket已推送第${currentProgress}批完整结果，长度: ${chunkResponse.content.length} 字符`);
         }
 
-        // 批次间休息（固定10张/批的优化策略）
-        if (chunkIndex < totalChunks - 1) {
-          const restTime = 300; // 固定300ms休息时间，平衡速度和稳定性
-          console.log(`😴 批次间休息 ${restTime}ms...`);
-          await new Promise(resolve => setTimeout(resolve, restTime));
+        // 批次间休息，给AI API缓冲时间
+        if (batchIndex < totalRecordBatches - 1) {
+          console.log('⏳ 批次间等待1秒，给AI API缓冲时间...');
+          await new Promise(resolve => setTimeout(resolve, 1000));
         }
 
-      } catch (chunkError) {
-        console.error(`❌ 第 ${chunkIndex + 1} 批处理失败:`, chunkError.message);
+      } catch (error) {
+        console.error(`❌ 第 ${batchIndex + 1} 批处理失败:`, error.message);
 
-        // 智能RIFF错误处理：尝试降级处理
-        if (chunkError.message && chunkError.message.includes('riff')) {
-          console.error(`🔍 第 ${chunkIndex + 1} 批出现RIFF错误，尝试降级处理...`);
+        // 构建错误信息作为批次结果
+        const errorAnalysis = `❌ 本批次分析失败\n错误信息：${error.message}\n\n本批次包含的记录：\n${batchRecords.map(r => `序列号${r.serialNumber}：分析失败`).join('\n')}`;
 
-          // 如果批次大小大于1，尝试拆分成更小的批次
-          if (chunkImageUrls.length > 1) {
-            console.log(`🔄 降级策略：将${chunkImageUrls.length}张图片拆分成单张处理`);
-
-            // 逐张处理当前批次的图片
-            for (let singleIdx = 0; singleIdx < chunkImageUrls.length; singleIdx++) {
-              try {
-                const singleImageUrl = [chunkImageUrls[singleIdx]];
-                const singleImageName = chunkImageNames[singleIdx];
-                const singleMapping = chunkMappingData[singleIdx];
-
-                console.log(`🔍 单张处理: ${singleImageName}`);
-
-                // 构建单张图片的提示词
-                const singlePrompt = `${customPrompt.trim()}\n\n🔥 图片信息：\n【图片 1】\n- 文件名: ${singleMapping.fileName}\n- 对应记录序列号: ${singleMapping.serialNumber}\n- 页面名称: ${singleMapping.webpageName}\n- 操作时间: ${singleMapping.triggerTime}\n- 操作类型: ${singleMapping.actionEvent}\n\n✅ 我已经将这张截图发送给你了，请仔细查看图片内容。\n请用友好的语言说明图片是否符合条件，并在最后添加标记：##RESULTS##[序列号]（如不符合则为空数组[]）\n\n⚠️ 注意：图片已发送，请使用自然语言表达，不要使用技术术语。`;
-
-                const singleMessage = createMultimodalMessage(singlePrompt, singleImageUrl);
-                const singleResponse = await model.invoke([singleMessage]);
-
-                if (singleResponse && singleResponse.content) {
-                  combinedAnalysis += `\n\n=== 单张图片分析 (${singleImageName}) ===\n`;
-                  combinedAnalysis += singleResponse.content;
-
-                  // 提取筛选结果（新格式：##RESULTS##）
-                  const singleFilteredMatch = singleResponse.content.match(/##RESULTS##\s*\[([\d,\s]*)\]/);
-                  if (singleFilteredMatch) {
-                    const singleNumbers = singleFilteredMatch[1]
-                      .split(',')
-                      .map(n => parseInt(n.trim()))
-                      .filter(n => !isNaN(n));
-                    allFilteredResults.push(...singleNumbers);
-                    console.log(`✅ 单张图片 ${singleImageName} 筛选结果: [${singleNumbers.join(', ')}]`);
-                  }
-                }
-
-                // 单张处理间短暂休息
-                await new Promise(resolve => setTimeout(resolve, 200));
-
-              } catch (singleError) {
-                console.error(`❌ 单张图片 ${chunkImageNames[singleIdx]} 处理失败:`, singleError.message);
-                combinedAnalysis += `\n\n=== 单张图片分析失败 (${chunkImageNames[singleIdx]}) ===\n`;
-                combinedAnalysis += `错误: ${singleError.message}\n`;
-              }
-            }
-          } else {
-            // 单张图片也失败，记录错误
-            console.error(`❌ 单张图片也无法处理: ${chunkImageNames[0]}`);
-            combinedAnalysis += `\n\n=== 图片分析失败 (${chunkImageNames[0]}) ===\n`;
-            combinedAnalysis += `错误: ${chunkError.message}\n`;
-          }
-
-          continue; // 继续处理下一批
-        } else {
-          // 其他错误则终止处理
-          throw chunkError;
+        // 发送batch_complete消息，将错误也作为批次结果
+        if (sessionId) {
+          progressManager.sendBatchComplete(sessionId, {
+            current: batchIndex + 1,
+            total: totalRecordBatches,
+            batchIndex: batchIndex + 1,
+            batchAnalysis: errorAnalysis,
+            recordRange: `${batchRecords[0].serialNumber}-${batchRecords[batchRecords.length - 1].serialNumber}`
+          });
         }
+
+        // 继续处理下一批，不中断
+        continue;
       }
     }
 
-    const endTime = Date.now();
-
-    // 去重：将重复的序列号合并为唯一列表
+    // 去重并排序
     const uniqueFilteredResults = [...new Set(allFilteredResults)].sort((a, b) => a - b);
-    console.log(`🔍 去重前: ${allFilteredResults.length} 个结果, 去重后: ${uniqueFilteredResults.length} 个唯一结果`);
-    console.log(`📋 最终唯一筛选结果: [${uniqueFilteredResults.join(', ')}]`);
+    console.log(`\n🎉 所有批次处理完成！`);
+    console.log(`📊 结果统计: 去重前${allFilteredResults.length}个，去重后${uniqueFilteredResults.length}个`);
+    console.log(`🎯 符合条件的序列号: ${uniqueFilteredResults.join(', ') || '无'}`);
 
-    // 构建最终的AI响应对象（用户友好的格式）
-    let finalSummary = '';
-    if (uniqueFilteredResults.length > 0) {
-      finalSummary = `\n\n=== 📊 搜索结果汇总 ===\n经过对 ${imageUrls.length} 张截图的仔细分析，共有 ${uniqueFilteredResults.length} 条记录符合您的搜索条件：\n序列号：${uniqueFilteredResults.join('、')}\n\n您可以在下方的列表中查看这些记录的详细信息。`;
-    } else {
-      finalSummary = `\n\n=== 📊 搜索结果汇总 ===\n很抱歉，在分析的 ${imageUrls.length} 张截图中，没有找到完全符合您搜索条件的记录。\n建议您尝试调整搜索条件后再次搜索。`;
-    }
-    const finalAnalysis = `${combinedAnalysis}${finalSummary}\n\n##RESULTS##[${uniqueFilteredResults.join(', ')}]`;
+    // 构建最终结果
+    const finalAnalysis = uniqueFilteredResults.length > 0
+      ? `经过分析，在 ${recordsData.length} 条记录中，找到 ${uniqueFilteredResults.length} 条符合您搜索条件的记录。\n\n符合条件的序列号：${uniqueFilteredResults.join(', ')}\n\n##RESULTS##[${uniqueFilteredResults.join(', ')}]`
+      : `经过分析，在 ${recordsData.length} 条记录中，没有找到符合您搜索条件的记录。\n\n##RESULTS##[]`;
 
-    const aiResponse = {
-      content: finalAnalysis,
-      usage: {
-        promptTokens: 'N/A (分批处理)',
-        completionTokens: 'N/A (分批处理)',
-        totalTokens: 'N/A (分批处理)'
-      }
-    };
-
-    console.log(`✅ 分批AI分析全部完成！总耗时: ${endTime - startTime}ms`);
-    console.log(`📊 去重前筛选结果: [${allFilteredResults.join(', ')}] (共${allFilteredResults.length}个)`);
-    console.log(`📊 去重后筛选结果: [${uniqueFilteredResults.join(', ')}] (共${uniqueFilteredResults.length}个)`);
-
-    // 发送最终结果的WebSocket消息（使用去重后的结果）
+    // 发送最终结果
     if (sessionId) {
       progressManager.sendFinalResult(sessionId, {
-        success: true,
         analysis: finalAnalysis,
         filteredResults: uniqueFilteredResults,
-        totalTime: endTime - startTime,
-        totalBatches: totalChunks,
-        totalImages: imageUrls.length,
-        message: '所有图片分析完成！'
+        totalRecords: recordsData.length,
+        matchedCount: uniqueFilteredResults.length,
+        processingTime: `${((Date.now() - startTime) / 1000).toFixed(1)}秒`
       });
     }
 
-    // 如果所有批次都失败了，返回错误
-    if (combinedAnalysis.trim() === '') {
-      console.error('❌ 所有批次都处理失败');
-      isProcessing = false;
-      return res.status(500).json({
-        success: false,
-        error: '所有图片批次分析都失败',
-        message: 'RIFF错误导致无法处理任何图片',
-        framework: 'LangChain.js',
-        timestamp: new Date().toISOString()
-      });
-    }
+    console.log(`⏱️ 总处理时间: ${((Date.now() - startTime) / 1000).toFixed(1)}秒`);
 
-    console.log('✅ AI分析完成！');
-    console.log(`⏱️ 分析耗时: ${endTime - startTime}ms`);
-
-    // 打印详细的AI响应数据
-    console.log('\n=== 后端：AI接口响应数据 ===');
-    console.log('📊 响应统计:');
-    console.log(`  - 响应时间: ${endTime - startTime}ms`);
-    console.log(`  - 响应类型: ${typeof aiResponse}`);
-    console.log(`  - 响应对象keys: ${Object.keys(aiResponse)}`);
-    console.log('📄 响应内容:');
-    console.log(`  - 内容长度: ${aiResponse.content ? aiResponse.content.length : 0} 字符`);
-    console.log(`  - 内容预览: "${aiResponse.content ? aiResponse.content.substring(0, 300) + '...' : '无内容'}"`);
-    if (aiResponse.usage) {
-      console.log('📊 Token使用统计:');
-      console.log(`  - 输入tokens: ${aiResponse.usage.promptTokens || 'N/A'}`);
-      console.log(`  - 输出tokens: ${aiResponse.usage.completionTokens || 'N/A'}`);
-      console.log(`  - 总tokens: ${aiResponse.usage.totalTokens || 'N/A'}`);
-    }
-    console.log('=== 后端AI响应数据结束 ===\n');
-
-    // 删除所有临时文件
-    console.log('🧹 清理临时文件...');
-    for (const file of req.files) {
-      await fs.remove(file.path);
-      console.log(`🗑️ 已删除临时文件: ${file.path}`);
-    }
-
-    console.log('📤 准备返回响应...');
-    const responseData = {
-      success: true,
-      data: {
-        analysis: aiResponse.content,
-        imageCount: req.files.length,
-        imageNames: imageNames,
-        customPromptUsed: true,
-        timestamp: new Date().toISOString(),
-        framework: 'LangChain.js',
-        config: getBestPracticeConfig().prompting
-      }
-    };
-
-    // 打印详细的返回响应数据
-    console.log('\n=== 后端：返回给前端的响应数据 ===');
-    console.log('📊 响应统计:');
-    console.log(`  - 成功状态: ${responseData.success}`);
-    console.log(`  - HTTP状态码: 200 OK`);
-    console.log('📄 响应数据:');
-    console.log(`  - 分析结果长度: ${responseData.data.analysis.length} 字符`);
-    console.log(`  - 处理图片数量: ${responseData.data.imageCount}`);
-    console.log(`  - 图片文件名数量: ${responseData.data.imageNames.length}`);
-    console.log(`  - 使用框架: ${responseData.data.framework}`);
-    console.log(`  - 时间戳: ${responseData.data.timestamp}`);
-    console.log(`  - 自定义提示词: ${responseData.data.customPromptUsed}`);
-    console.log(`  - 响应JSON大小: ${JSON.stringify(responseData).length} 字符`);
-    console.log('=== 后端响应数据结束 ===\n');
-
-    console.log('✅ 分析请求处理完成！');
-    console.log('=== 多图片分析请求结束 ===\n');
-
-    // 释放锁定状态
+    // 释放资源
     isProcessing = false;
-    console.log('🔓 释放处理状态锁定');
-
-    // 强制垃圾回收以释放内存
     if (global.gc) {
       global.gc();
-      console.log('🧹 请求完成后强制垃圾回收');
+      console.log('🧹 垃圾回收完成');
     }
 
-    res.json(responseData);
+    // 返回成功响应
+    res.json({
+      success: true,
+      analysis: finalAnalysis,
+      filteredResults: uniqueFilteredResults,
+      framework: 'LangChain.js',
+      model: 'kimi-latest',
+      timestamp: new Date().toISOString()
+    });
 
   } catch (error) {
-    console.error('\n❌ 多图片分析错误:', error);
-    console.error('错误堆栈:', error.stack);
+    console.error('❌ 图片分析过程中发生错误:', error);
 
-    // 发送错误的WebSocket消息
-    const sessionId = req.body.sessionId;
+    // 发送错误消息
     if (sessionId) {
       progressManager.sendError(sessionId, error);
     }
 
-    // 清理所有临时文件
-    console.log('🧹 错误处理：清理临时文件...');
-    if (req.files && req.files.length > 0) {
-      for (const file of req.files) {
-        try {
-          await fs.remove(file.path);
-          console.log(`🗑️ 已清理临时文件: ${file.path}`);
-        } catch (cleanupError) {
-          console.error('❌ 清理临时文件失败:', cleanupError);
-        }
-      }
-    }
-
-    console.log('📤 返回错误响应...');
-    console.log('=== 多图片分析请求异常结束 ===\n');
-
-    // 释放锁定状态
+    // 释放资源
     isProcessing = false;
     console.log('🔓 错误处理：释放处理状态锁定');
 
@@ -863,7 +605,7 @@ ${detailedMappingInfo}
 
     res.status(500).json({
       success: false,
-      error: '图片分析失败',
+      error: '记录分析失败',
       message: error.message,
       framework: 'LangChain.js',
       timestamp: new Date().toISOString()
