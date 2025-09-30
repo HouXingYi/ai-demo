@@ -430,6 +430,20 @@ ${JSON.stringify(data, null, 2)}
           console.log(`🚀 发送请求到: ${getApiBaseUrl()}/api/ai/analyze-multi-images`);
           console.log(`📦 FormData包含: ${imageFiles.length} 个图片文件`);
 
+          // 打印详细的请求数据
+          console.log('\n=== 前端：发送给后端的请求数据 ===');
+          console.log('🔗 请求URL:', `${getApiBaseUrl()}/api/ai/analyze-multi-images`);
+          console.log('📝 请求方法: POST');
+          console.log('📋 Content-Type: multipart/form-data');
+          console.log('📊 FormData 详细内容:');
+          console.log(`  - customPrompt: "${analysisPrompt.substring(0, 200)}..."`);
+          console.log(`  - 图片文件数量: ${imageFiles.length}`);
+          console.log(`  - 图片文件列表:`);
+          imageFiles.forEach((fileName, index) => {
+            console.log(`    ${index + 1}. ${fileName}`);
+          });
+          console.log('=== 前端请求数据结束 ===\n');
+
           const response = await fetch(`${getApiBaseUrl()}/api/ai/analyze-multi-images`, {
             method: 'POST',
             body: formData,
@@ -446,7 +460,25 @@ ${JSON.stringify(data, null, 2)}
           }
 
           const result = await response.json();
-          console.log('📄 收到API响应:', result);
+
+          // 打印详细的响应数据
+          console.log('\n=== 前端：收到后端响应数据 ===');
+          console.log('📊 响应统计:');
+          console.log(`  - HTTP状态: ${response.status} ${response.statusText}`);
+          console.log(`  - 响应类型: ${typeof result}`);
+          console.log(`  - 成功状态: ${result.success}`);
+          console.log('📄 响应内容:');
+          if (result.success && result.data) {
+            console.log(`  - 分析结果长度: ${result.data.analysis ? result.data.analysis.length : 0} 字符`);
+            console.log(`  - 处理图片数量: ${result.data.imageCount || 'N/A'}`);
+            console.log(`  - 使用框架: ${result.data.framework || 'N/A'}`);
+            console.log(`  - 时间戳: ${result.data.timestamp || 'N/A'}`);
+            console.log(`  - 图片文件名: ${result.data.imageNames ? result.data.imageNames.slice(0, 5).join(', ') + (result.data.imageNames.length > 5 ? '...' : '') : 'N/A'}`);
+            console.log(`  - 分析结果预览: "${result.data.analysis ? result.data.analysis.substring(0, 200) + '...' : '无内容'}"`);
+          } else {
+            console.log(`  - 错误信息: ${result.error || 'N/A'}`);
+          }
+          console.log('=== 前端响应数据结束 ===\n');
 
           if (result.success) {
             const analysisText = result.data.analysis;

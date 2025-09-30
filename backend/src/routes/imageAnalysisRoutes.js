@@ -153,6 +153,37 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
     const message = createMultimodalMessage(promptText, imageUrls);
     console.log('✅ 多模态消息创建成功');
 
+    // 打印详细的AI请求数据
+    console.log('\n=== 后端：发送给AI接口的数据 ===');
+    console.log('🤖 AI模型配置:');
+    console.log('  - temperature: 0.7');
+    console.log('  - maxTokens: 2000');
+    console.log('📝 提示词信息:');
+    console.log(`  - 提示词长度: ${promptText.length} 字符`);
+    console.log(`  - 提示词内容: "${promptText.substring(0, 300)}..."`);
+    console.log('🖼️ 图片信息:');
+    console.log(`  - 图片数量: ${imageUrls.length} 张`);
+    console.log(`  - 图片格式统计:`);
+    const formatStats = {};
+    imageUrls.forEach((url, index) => {
+      const format = url.split(';')[0].split('/')[1];
+      formatStats[format] = (formatStats[format] || 0) + 1;
+      if (index < 10) {
+        console.log(`    ${index + 1}. ${imageNames[index]} (${format})`);
+      }
+    });
+    if (imageUrls.length > 10) {
+      console.log(`    ... 还有 ${imageUrls.length - 10} 张图片`);
+    }
+    Object.keys(formatStats).forEach(format => {
+      console.log(`  - ${format}: ${formatStats[format]} 张`);
+    });
+    console.log(`📊 Base64数据统计:`);
+    const totalSize = imageUrls.reduce((sum, url) => sum + url.length, 0);
+    console.log(`  - 总Base64长度: ${totalSize} 字符`);
+    console.log(`  - 平均每张: ${Math.round(totalSize / imageUrls.length)} 字符`);
+    console.log('=== 后端AI请求数据结束 ===\n');
+
     // 带重试机制的分析函数
     console.log('🔄 开始调用AI分析（带重试机制）...');
     const analyzeWithRetry = withRetry(async () => {
@@ -166,8 +197,23 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
 
     console.log('✅ AI分析完成！');
     console.log(`⏱️ 分析耗时: ${endTime - startTime}ms`);
-    console.log(`📄 响应内容长度: ${aiResponse.content ? aiResponse.content.length : 0} 字符`);
-    console.log(`📋 响应内容预览: ${aiResponse.content ? aiResponse.content.substring(0, 200) + '...' : '无内容'}`);
+
+    // 打印详细的AI响应数据
+    console.log('\n=== 后端：AI接口响应数据 ===');
+    console.log('📊 响应统计:');
+    console.log(`  - 响应时间: ${endTime - startTime}ms`);
+    console.log(`  - 响应类型: ${typeof aiResponse}`);
+    console.log(`  - 响应对象keys: ${Object.keys(aiResponse)}`);
+    console.log('📄 响应内容:');
+    console.log(`  - 内容长度: ${aiResponse.content ? aiResponse.content.length : 0} 字符`);
+    console.log(`  - 内容预览: "${aiResponse.content ? aiResponse.content.substring(0, 300) + '...' : '无内容'}"`);
+    if (aiResponse.usage) {
+      console.log('📊 Token使用统计:');
+      console.log(`  - 输入tokens: ${aiResponse.usage.promptTokens || 'N/A'}`);
+      console.log(`  - 输出tokens: ${aiResponse.usage.completionTokens || 'N/A'}`);
+      console.log(`  - 总tokens: ${aiResponse.usage.totalTokens || 'N/A'}`);
+    }
+    console.log('=== 后端AI响应数据结束 ===\n');
 
     // 删除所有临时文件
     console.log('🧹 清理临时文件...');
@@ -189,6 +235,21 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
         config: getBestPracticeConfig().prompting
       }
     };
+
+    // 打印详细的返回响应数据
+    console.log('\n=== 后端：返回给前端的响应数据 ===');
+    console.log('📊 响应统计:');
+    console.log(`  - 成功状态: ${responseData.success}`);
+    console.log(`  - HTTP状态码: 200 OK`);
+    console.log('📄 响应数据:');
+    console.log(`  - 分析结果长度: ${responseData.data.analysis.length} 字符`);
+    console.log(`  - 处理图片数量: ${responseData.data.imageCount}`);
+    console.log(`  - 图片文件名数量: ${responseData.data.imageNames.length}`);
+    console.log(`  - 使用框架: ${responseData.data.framework}`);
+    console.log(`  - 时间戳: ${responseData.data.timestamp}`);
+    console.log(`  - 自定义提示词: ${responseData.data.customPromptUsed}`);
+    console.log(`  - 响应JSON大小: ${JSON.stringify(responseData).length} 字符`);
+    console.log('=== 后端响应数据结束 ===\n');
 
     console.log('✅ 分析请求处理完成！');
     console.log('=== 多图片分析请求结束 ===\n');
