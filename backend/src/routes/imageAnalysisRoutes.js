@@ -390,33 +390,39 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
       }).join('\n');
 
       const serialNumbers = batchRecords.map(r => r.serialNumber);
-      const batchPrompt = `用户搜索："${customPrompt.trim()}"
+      const batchPrompt = `
+      用户搜索："${customPrompt.trim()}"
 
-以下是 ${batchRecords.length} 条记录及对应的 ${batchImages.length} 张截图：
-${recordsInfo}
+      以下是 ${batchRecords.length} 条记录及对应的 ${batchImages.length} 张截图：
+      ${recordsInfo}
 
-任务：
-1. 筛选：从这些记录中找出符合用户搜索条件的序列号
-2. 回答：根据用户的搜索问题，结合记录和截图内容给出详细回答
 
-规则：
-1. 查看序列号对应的图片内容，精确匹配用户搜索的关键信息
-2. 不确定的不要返回，宁可漏掉也不要误判
-3. 回答要具体：说明在哪些记录/截图中看到了什么内容
-4. 截图的右下角有具体的操作人的名称和时间
+      任务：
+      1. 筛选：从这些记录中找出符合用户搜索条件的序列号
+      2. 回答：根据用户的搜索问题，结合记录和截图内容给出详细回答
 
-输出格式：
-序列号X：[详细分析，回答用户问题]
-序列号Y：[详细分析，回答用户问题]
-...
 
-总结回答：
-[针对用户搜索问题的综合回答]
+      规则：
+      1. 查看序列号对应的图片内容，精确匹配用户搜索的关键信息
+      2. 不确定的不要返回，宁可漏掉也不要误判
+      3. 回答要具体：说明在哪些记录/截图中看到了什么内容
+      4. 截图的右下角有具体的操作人的名称和时间
 
-符合用户搜索条件的序列号：
-##RESULTS##[符合的序列号数组]
 
-开始分析：`;
+      输出格式：
+      序列号X：[详细分析，回答用户问题]
+      序列号Y：[详细分析，回答用户问题]
+      ...
+      序列号Z：[详细分析，回答用户问题]
+
+      总结回答：
+      [针对用户搜索问题的综合回答]
+
+      符合用户搜索条件的序列号：
+      ##RESULTS##[符合的序列号数组]
+
+      开始分析：
+`;
 
       console.log(`\n${'='.repeat(80)}`);
       console.log(`📦 第 ${batchIndex + 1}/${totalRecordBatches} 批次数据详情`);
