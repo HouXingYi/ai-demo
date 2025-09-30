@@ -8,6 +8,8 @@ import { RunnableSequence } from '@langchain/core/runnables';
 // 默认配置
 const DEFAULT_CONFIG = {
   modelName: "kimi-latest",
+  // modelName: "kimi-k2-turbo-preview",
+  // modelName: "moonshot-v1-8k-vision-preview",
   baseURL: "https://api.moonshot.cn/v1",
   temperature: 0.6,
   maxTokens: 2000,

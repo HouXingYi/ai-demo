@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Button,
   Card,
@@ -13,7 +13,9 @@ import {
   Tooltip,
   Modal,
   Image,
-  Spin
+  Spin,
+  Progress,
+  Alert
 } from 'antd';
 import {
   SearchOutlined,
@@ -50,11 +52,146 @@ const SmartListAnalysisPage: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
+  // 新增：批处理进度状态
+  const [batchProgress, setBatchProgress] = useState({
+    current: 0,
+    total: 0,
+    currentBatchImages: 0,
+    status: '' as 'processing' | 'success' | 'error' | '',
+    message: '',
+    batchResults: [] as string[], // 存储每批次的分析结果
+  });
+
+  // WebSocket相关状态和引用
+  const wsRef = useRef<WebSocket | null>(null);
+  const sessionIdRef = useRef<string>('');
+  const [wsConnected, setWsConnected] = useState(false);
+
   // 图片预览相关状态
   const [previewVisible, setPreviewVisible] = useState(false);
   const [previewImage, setPreviewImage] = useState<string>('');
   const [previewTitle, setPreviewTitle] = useState<string>('');
   const [imageLoading, setImageLoading] = useState(false);
+
+  // WebSocket连接管理
+  const connectWebSocket = (sessionId: string) => {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const hostname = window.location.hostname;
+    const port = hostname === 'localhost' || hostname === '127.0.0.1' ? '3001' : window.location.port;
+    const wsUrl = `${protocol}//${hostname}:${port}/ws/progress?sessionId=${sessionId}`;
+
+    console.log('🔌 连接WebSocket:', wsUrl);
+
+    const ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      console.log('✅ WebSocket连接成功');
+      setWsConnected(true);
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        console.log('📨 收到WebSocket消息:', message);
+
+        switch (message.type) {
+          case 'connected':
+            console.log('✅ WebSocket已连接');
+            break;
+
+          case 'progress':
+            setBatchProgress(prev => ({
+              ...prev,
+              current: message.current || 0,
+              total: message.total || 0,
+              currentBatchImages: message.totalImages || 0,
+              status: 'processing',
+              message: message.message || '处理中...'
+            }));
+            break;
+
+          case 'batch_complete':
+            console.log(`✅ 第 ${message.batchIndex} 批完成`, message);
+            setBatchProgress(prev => ({
+              ...prev,
+              current: message.current || 0,
+              total: message.total || 0,
+              status: 'processing',
+              message: message.message || '',
+              batchResults: [...prev.batchResults, message.batchAnalysis || '']
+            }));
+            // 实时显示中间结果
+            if (message.batchAnalysis) {
+              setAnalysisResult(prev => prev + '\n\n' + message.batchAnalysis);
+            }
+            break;
+
+          case 'final_result':
+            console.log('🎉 所有批次完成！', message);
+            setBatchProgress(prev => ({
+              ...prev,
+              current: message.totalBatches || 0,
+              total: message.totalBatches || 0,
+              status: 'success',
+              message: message.message || '完成！'
+            }));
+            setAnalysisResult(message.analysis || '');
+
+            // 提取筛选结果并更新列表
+            if (message.filteredResults && message.filteredResults.length > 0) {
+              const filteredRecords = data.filter(record =>
+                message.filteredResults.includes(record.serialNumber)
+              );
+              setFilteredData(filteredRecords);
+              setCurrentPage(1);
+            }
+
+            notification.success({
+              message: '分析完成',
+              description: `成功分析了${message.totalImages}张图片，耗时${Math.round(message.totalTime / 1000)}秒`,
+            });
+            break;
+
+          case 'error':
+            console.error('❌ WebSocket错误消息:', message);
+            setBatchProgress(prev => ({
+              ...prev,
+              status: 'error',
+              message: message.error || '处理失败'
+            }));
+            notification.error({
+              message: '处理失败',
+              description: message.error || '未知错误',
+            });
+            break;
+        }
+      } catch (error) {
+        console.error('解析WebSocket消息失败:', error);
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error('❌ WebSocket错误:', error);
+      setWsConnected(false);
+    };
+
+    ws.onclose = () => {
+      console.log('🔌 WebSocket连接关闭');
+      setWsConnected(false);
+    };
+
+    wsRef.current = ws;
+    return ws;
+  };
+
+  // 组件卸载时关闭WebSocket
+  useEffect(() => {
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
+  }, []);
 
   // 计算当前页数据
   const getCurrentPageData = () => {
@@ -242,15 +379,33 @@ const SmartListAnalysisPage: React.FC = () => {
     });
   };
 
-  // 获取图片文件（增强版 - 支持图片验证）
-  const getImageFile = async (fileName: string): Promise<File | null> => {
+  // 获取图片文件（增强版 - 支持图片验证和重试）
+  const getImageFile = async (fileName: string, retryCount = 0): Promise<File | null> => {
+    const maxRetries = 2;
+
     try {
+      console.log(`🔄 获取图片文件: ${fileName} (尝试 ${retryCount + 1}/${maxRetries + 1})`);
+
       // 使用public目录中的图片文件
       const imagePath = `/screenshotFile/${fileName}`;
-      const response = await fetch(imagePath);
+      const response = await fetch(imagePath, {
+        cache: 'no-cache', // 避免缓存问题
+        headers: {
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        }
+      });
 
       if (!response.ok) {
         console.error(`❌ 无法获取图片: ${imagePath}, 状态: ${response.status}`);
+
+        // 如果是404错误且还有重试次数，尝试重试
+        if (response.status === 404 && retryCount < maxRetries) {
+          console.log(`⏳ 图片未找到，${500}ms后重试...`);
+          await new Promise(resolve => setTimeout(resolve, 500));
+          return getImageFile(fileName, retryCount + 1);
+        }
+
         return null;
       }
 
@@ -259,61 +414,130 @@ const SmartListAnalysisPage: React.FC = () => {
       // 验证文件大小
       if (blob.size === 0) {
         console.error(`❌ 图片文件为空: ${fileName}`);
+
+        // 如果文件为空且还有重试次数，尝试重试
+        if (retryCount < maxRetries) {
+          console.log(`⏳ 文件为空，${500}ms后重试...`);
+          await new Promise(resolve => setTimeout(resolve, 500));
+          return getImageFile(fileName, retryCount + 1);
+        }
+
         return null;
       }
 
-      // 验证MIME类型
-      const validTypes = ['image/webp', 'image/jpeg', 'image/jpg', 'image/png'];
+      // 验证MIME类型（宽松处理）
+      const validTypes = ['image/webp', 'image/jpeg', 'image/jpg', 'image/png', 'application/octet-stream'];
       if (!validTypes.includes(blob.type)) {
-        console.warn(`⚠️ 图片类型可能不正确: ${fileName}, 类型: ${blob.type}`);
+        console.warn(`⚠️ 图片类型可能不正确: ${fileName}, 类型: ${blob.type}, 但继续处理`);
       }
 
-      // 尝试验证图片文件头
-      const arrayBuffer = await blob.arrayBuffer();
-      const uint8Array = new Uint8Array(arrayBuffer);
+      // 尝试验证图片文件头（宽松处理）
+      try {
+        const arrayBuffer = await blob.arrayBuffer();
+        const uint8Array = new Uint8Array(arrayBuffer);
 
-      // 检查常见的图片文件头
-      const isValidImage = validateImageHeader(uint8Array, fileName);
-      if (!isValidImage) {
-        console.error(`❌ 图片文件头验证失败: ${fileName}`);
-        return null;
+        // 检查常见的图片文件头
+        const isValidImage = validateImageHeader(uint8Array, fileName);
+        if (!isValidImage) {
+          console.warn(`⚠️ 图片文件头验证失败: ${fileName}, 但继续处理`);
+          // 不再直接返回null，而是继续处理
+        }
+      } catch (validationError) {
+        console.warn(`⚠️ 图片验证过程出错: ${fileName}`, validationError);
+        // 验证出错也继续处理
       }
 
-      console.log(`✅ 图片验证通过: ${fileName}, 大小: ${blob.size} bytes, 类型: ${blob.type}`);
-      return new File([blob], fileName, { type: blob.type });
+      console.log(`✅ 图片获取成功: ${fileName}, 大小: ${blob.size} bytes, 类型: ${blob.type}`);
+
+      // 确保返回正确的MIME类型
+      let mimeType = blob.type;
+      if (!mimeType || mimeType === 'application/octet-stream') {
+        // 根据文件扩展名推断MIME类型
+        if (fileName.toLowerCase().endsWith('.webp')) {
+          mimeType = 'image/webp';
+        } else if (fileName.toLowerCase().endsWith('.jpeg') || fileName.toLowerCase().endsWith('.jpg')) {
+          mimeType = 'image/jpeg';
+        } else if (fileName.toLowerCase().endsWith('.png')) {
+          mimeType = 'image/png';
+        }
+      }
+
+      return new File([blob], fileName, { type: mimeType });
     } catch (error) {
       console.error(`❌ 获取图片文件失败: ${fileName}`, error);
+
+      // 如果还有重试次数，尝试重试
+      if (retryCount < maxRetries) {
+        console.log(`⏳ 发生错误，${1000}ms后重试...`);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        return getImageFile(fileName, retryCount + 1);
+      }
+
       return null;
     }
   };
 
-  // 验证图片文件头
+  // 验证图片文件头（改进版 - 更宽松的验证）
   const validateImageHeader = (uint8Array: Uint8Array, fileName: string): boolean => {
-    if (uint8Array.length < 4) {
-      return false;
-    }
+    try {
+      if (uint8Array.length < 4) {
+        console.warn(`⚠️ 图片文件太小: ${fileName}, 大小: ${uint8Array.length} bytes`);
+        return false;
+      }
 
-    // WebP文件头: RIFF....WEBP
-    if (fileName.toLowerCase().endsWith('.webp')) {
-      const riffHeader = uint8Array.slice(0, 4);
-      const webpHeader = uint8Array.slice(8, 12);
-      const isRIFF = String.fromCharCode(...riffHeader) === 'RIFF';
-      const isWEBP = String.fromCharCode(...webpHeader) === 'WEBP';
-      return isRIFF && isWEBP;
-    }
+      // WebP文件头: RIFF....WEBP
+      if (fileName.toLowerCase().endsWith('.webp')) {
+        // 检查文件是否足够长
+        if (uint8Array.length < 12) {
+          console.warn(`⚠️ WebP文件头不完整: ${fileName}, 大小: ${uint8Array.length} bytes`);
+          return false;
+        }
 
-    // JPEG文件头: FF D8 FF
-    if (fileName.toLowerCase().endsWith('.jpeg') || fileName.toLowerCase().endsWith('.jpg')) {
-      return uint8Array[0] === 0xFF && uint8Array[1] === 0xD8 && uint8Array[2] === 0xFF;
-    }
+        try {
+          const riffHeader = uint8Array.slice(0, 4);
+          const webpHeader = uint8Array.slice(8, 12);
+          const isRIFF = String.fromCharCode(...riffHeader) === 'RIFF';
+          const isWEBP = String.fromCharCode(...webpHeader) === 'WEBP';
 
-    // PNG文件头: 89 50 4E 47
-    if (fileName.toLowerCase().endsWith('.png')) {
-      return uint8Array[0] === 0x89 && uint8Array[1] === 0x50 &&
-        uint8Array[2] === 0x4E && uint8Array[3] === 0x47;
-    }
+          if (!isRIFF || !isWEBP) {
+            console.warn(`⚠️ WebP文件头验证失败: ${fileName}, RIFF: ${isRIFF}, WEBP: ${isWEBP}`);
+            // 对于WebP文件，如果验证失败，我们仍然尝试处理，因为可能是文件格式的变体
+            return true; // 改为宽松验证
+          }
 
-    return true; // 对于其他格式，暂时返回true
+          return true;
+        } catch (headerError) {
+          console.warn(`⚠️ WebP文件头解析错误: ${fileName}`, headerError);
+          return true; // 宽松处理，允许继续
+        }
+      }
+
+      // JPEG文件头: FF D8 FF
+      if (fileName.toLowerCase().endsWith('.jpeg') || fileName.toLowerCase().endsWith('.jpg')) {
+        const isJPEG = uint8Array[0] === 0xFF && uint8Array[1] === 0xD8 && uint8Array[2] === 0xFF;
+        if (!isJPEG) {
+          console.warn(`⚠️ JPEG文件头验证失败: ${fileName}`);
+        }
+        return isJPEG;
+      }
+
+      // PNG文件头: 89 50 4E 47
+      if (fileName.toLowerCase().endsWith('.png')) {
+        const isPNG = uint8Array[0] === 0x89 && uint8Array[1] === 0x50 &&
+          uint8Array[2] === 0x4E && uint8Array[3] === 0x47;
+        if (!isPNG) {
+          console.warn(`⚠️ PNG文件头验证失败: ${fileName}`);
+        }
+        return isPNG;
+      }
+
+      // 对于其他格式，直接返回true
+      console.log(`✅ 跳过文件头验证: ${fileName} (未知格式)`);
+      return true;
+    } catch (error) {
+      console.error(`❌ 图片文件头验证异常: ${fileName}`, error);
+      return true; // 发生异常时，宽松处理
+    }
   };
 
   // 执行AI分析
@@ -332,6 +556,26 @@ const SmartListAnalysisPage: React.FC = () => {
     }
 
     setLoading(true);
+
+    // 生成唯一的sessionId
+    const sessionId = `session-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+    sessionIdRef.current = sessionId;
+
+    // 连接WebSocket
+    connectWebSocket(sessionId);
+
+    // 重置进度状态
+    setBatchProgress({
+      current: 0,
+      total: 0,
+      currentBatchImages: 0,
+      status: 'processing',
+      message: '正在连接...',
+      batchResults: [],
+    });
+
+    // 清空之前的分析结果
+    setAnalysisResult('');
 
     try {
       // 动态获取API基础URL
@@ -379,7 +623,7 @@ ${JSON.stringify(data, null, 2)}
         const formData = new FormData();
         formData.append('customPrompt', analysisPrompt);
 
-        // 收集所有截图文件（支持最多200个文件的超大批量处理）
+        // 收集所有截图文件（超大批量处理 - 支持100+文件）
         const imageFiles = [];
         const imageRecordMapping: Array<{
           imageIndex: number;
@@ -389,11 +633,12 @@ ${JSON.stringify(data, null, 2)}
           triggerTime: string;
           actionEvent: string;
         }> = []; // 新增：记录图片与数据记录的对应关系
-        const maxFiles = 200;
-        const recordsToProcess = recordsWithScreenshots.slice(0, maxFiles);
-        console.log(`开始处理 ${recordsToProcess.length} 条有截图的记录（最多${maxFiles}个文件）`);
-        console.log(`📊 数据统计: 总记录${data.length}条，有截图${recordsWithScreenshots.length}条，本次处理${recordsToProcess.length}条`);
-        console.log(`🚀 超大批量模式: 支持最多${maxFiles}个图片同时分析`);
+
+        // 处理所有有截图的记录，不限制数量
+        const recordsToProcess = recordsWithScreenshots;
+        console.log(`开始处理 ${recordsToProcess.length} 条有截图的记录`);
+        console.log(`📊 数据统计: 总记录${data.length}条，有截图${recordsWithScreenshots.length}条`);
+        console.log(`🚀 超大批量模式: 支持大规模图片分析（${recordsToProcess.length}张图片）`);
 
         // 分批获取图片文件，显示进度（增强版错误统计）
         let processedCount = 0;
@@ -429,6 +674,11 @@ ${JSON.stringify(data, null, 2)}
 
           processedCount++;
           console.log(`📈 获取进度: ${processedCount}/${recordsToProcess.length} (${Math.round(processedCount / recordsToProcess.length * 100)}%) - 成功: ${successCount}, 失败: ${failedFiles.length}`);
+
+          // 添加短暂延迟，避免过快的文件访问
+          if (processedCount % 5 === 0) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
         }
 
         // 显示详细的处理结果统计
@@ -442,6 +692,7 @@ ${JSON.stringify(data, null, 2)}
         }
 
         console.log(`📊 最终统计: 尝试处理 ${recordsToProcess.length} 条记录，成功获取 ${imageFiles.length} 张有效图片`);
+        console.log(`📦 WebSocket将接收后端实时进度更新（每批10张）`);
 
         // 新增：特别验证序列号97的映射（用于调试）
         const serial97Mapping = imageRecordMapping.find(m => m.serialNumber === 97);
@@ -458,6 +709,8 @@ ${JSON.stringify(data, null, 2)}
         if (imageFiles.length > 0) {
           // 新增：将图片与记录的对应关系信息发送给后端
           formData.append('imageRecordMapping', JSON.stringify(imageRecordMapping));
+          // 新增：发送sessionId用于WebSocket通信
+          formData.append('sessionId', sessionId);
 
           console.log(`🚀 发送请求到: ${getApiBaseUrl()}/api/ai/analyze-multi-images`);
           console.log(`📦 FormData包含: ${imageFiles.length} 个图片文件`);
@@ -507,6 +760,12 @@ ${JSON.stringify(data, null, 2)}
             console.error(`API错误响应:`, errorText);
             console.error(`响应状态: ${response.status} ${response.statusText}`);
             console.error(`请求URL: ${getApiBaseUrl()}/api/ai/analyze-multi-images`);
+
+            // 特殊处理并发请求错误
+            if (response.status === 429) {
+              throw new Error('服务器正在处理其他请求，请稍后重试');
+            }
+
             throw new Error(`HTTP错误: ${response.status} - ${errorText}`);
           }
 
@@ -532,57 +791,9 @@ ${JSON.stringify(data, null, 2)}
           console.log('=== 前端响应数据结束 ===\n');
 
           if (result.success) {
-            const analysisText = result.data.analysis;
-            console.log('✅ 分析成功！');
-            console.log('📝 分析结果长度:', analysisText.length);
-            console.log('📋 分析结果预览:', analysisText.substring(0, 300) + '...');
-
-            setAnalysisResult(analysisText);
-
-            // 尝试提取筛选结果（支持多种格式）
-            let filteredMatch = analysisText.match(/FILTERED_RESULTS:\s*\[([\d,\s]*)\]/);
-
-            // 如果没找到标准格式，尝试其他可能的格式
-            if (!filteredMatch) {
-              filteredMatch = analysisText.match(/筛选结果:\s*\[([\d,\s]*)\]/);
-            }
-            if (!filteredMatch) {
-              filteredMatch = analysisText.match(/符合条件的记录:\s*\[([\d,\s]*)\]/);
-            }
-            if (!filteredMatch) {
-              filteredMatch = analysisText.match(/serialNumber[^:]*:\s*\[([\d,\s]*)\]/);
-            }
-
-            if (filteredMatch) {
-              console.log('🎯 找到筛选结果:', filteredMatch[1]);
-              const filteredNumbers = filteredMatch[1]
-                .split(',')
-                .map((n: string) => parseInt(n.trim()))
-                .filter((n: number) => !isNaN(n));
-
-              console.log('🔢 筛选的序号:', filteredNumbers);
-
-              // 根据筛选结果更新显示的数据
-              const filteredRecords = data.filter(record =>
-                filteredNumbers.includes(record.serialNumber)
-              );
-              console.log('📊 筛选后的记录数量:', filteredRecords.length);
-              setFilteredData(filteredRecords);
-            } else {
-              console.log('⚠️ 未找到筛选结果标记，保持当前筛选状态或显示所有有截图的数据');
-              // 如果没有找到筛选结果，显示所有有截图的记录
-              const recordsWithScreenshots = data.filter(record => record.screenshotFileName);
-              console.log('📊 显示所有有截图的记录数量:', recordsWithScreenshots.length);
-              setFilteredData(recordsWithScreenshots);
-            }
-
-            // 强制刷新表格状态
-            setCurrentPage(1);
-            console.log('🔄 表格状态已更新，当前页面重置为第1页');
-            notification.success({
-              message: '搜索完成',
-              description: `AI已完成操作记录搜索，成功分析了${imageFiles.length}张有效截图${failedFiles.length > 0 ? `，跳过了${failedFiles.length}个无效文件` : ''}`,
-            });
+            console.log('✅ HTTP请求成功！WebSocket已接收完整分析结果');
+            // 注意：实际的分析结果、进度更新和筛选结果都通过WebSocket实时推送
+            // 这里的HTTP响应只是确认后端已开始处理
           } else {
             throw new Error(result.error || '图片分析失败');
           }
@@ -666,6 +877,12 @@ ${JSON.stringify(data, null, 2)}
       const errorMessage = error instanceof Error ? error.message : '无法连接到AI服务';
       console.error('❌ 错误详情:', errorMessage);
 
+      // 更新进度为错误状态
+      setBatchProgress(prev => ({
+        ...prev,
+        status: 'error',
+      }));
+
       notification.error({
         message: '搜索失败',
         description: errorMessage,
@@ -731,6 +948,48 @@ ${JSON.stringify(data, null, 2)}
                 style={{ marginTop: 8 }}
               />
             </div>
+
+            {/* WebSocket实时进度显示 */}
+            {loading && batchProgress.total > 0 && (
+              <Alert
+                message={
+                  <div>
+                    <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <Text strong>正在实时分析图片...</Text>
+                        {/* <Text type="secondary" style={{ marginLeft: 8 }}>
+                          {wsConnected ? '🟢 WebSocket已连接' : '🔴 连接中...'}
+                        </Text> */}
+                      </div>
+                      <Text type="secondary">
+                        批次 {batchProgress.current}/{batchProgress.total}
+                      </Text>
+                    </div>
+                    <Progress
+                      percent={batchProgress.total > 0 ? Math.round((batchProgress.current / batchProgress.total) * 100) : 0}
+                      status={
+                        batchProgress.status === 'error' ? 'exception' :
+                          batchProgress.status === 'success' ? 'success' :
+                            'active'
+                      }
+                      strokeColor={{
+                        '0%': '#108ee9',
+                        '100%': '#87d068',
+                      }}
+                    />
+                    <div style={{ marginTop: 8, fontSize: 12 }}>
+                      <Space split="|" style={{ width: '100%', justifyContent: 'space-between' }}>
+                        <span>📷 总共 {batchProgress.currentBatchImages} 张图片</span>
+                        <span>📦 每批10张 (固定策略)</span>
+                        <span style={{ color: '#1890ff' }}>✨ {batchProgress.message || '处理中...'}</span>
+                      </Space>
+                    </div>
+                  </div>
+                }
+                type={batchProgress.status === 'success' ? 'success' : 'info'}
+                showIcon
+              />
+            )}
 
             {/* 分析结果 */}
             {analysisResult && (
