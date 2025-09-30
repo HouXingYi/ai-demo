@@ -381,96 +381,92 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
       // 为当前批次构建提示词和图片
       const batchImages = [];
       const recordsInfo = batchRecords.map((record, idx) => {
-        let imageInfo = '';
         if (record.hasImage && record.screenshotFileName && imageFileMap.has(record.screenshotFileName)) {
-          // 有图片，添加到批次图片列表
           batchImages.push(imageFileMap.get(record.screenshotFileName));
-          imageInfo = `✅ 有截图（已附带图片${batchImages.length}）`;
+          return `序列号${record.serialNumber} | ${record.webpageName} | ${record.actionEvent} | 图片${batchImages.length}`;
         } else {
-          imageInfo = '❌ 无截图';
+          return `序列号${record.serialNumber} | ${record.webpageName} | ${record.actionEvent} | 无图片`;
         }
+      }).join('\n');
 
-        return `【记录 ${idx + 1}】序列号：${record.serialNumber}
-- 页面名称：${record.webpageName}
-- 页面URL：${record.webpageUrl || '无'}
-- 操作类型：${record.actionEvent}
-- 触发时间：${record.triggerTime}
-- 截图状态：${imageInfo}`;
-      }).join('\n\n');
-
-      // 提取所有序列号用于提示词
       const serialNumbers = batchRecords.map(r => r.serialNumber);
-      const batchPrompt = `你是一个专业的操作记录分析助手。用户的搜索需求是："${customPrompt.trim()}"
+      const batchPrompt = `用户搜索："${customPrompt.trim()}"
 
-我将为你提供 ${batchRecords.length} 条操作记录（序列号：${serialNumbers.join('、')}），其中一些记录有对应的网页截图。
-
-📋 操作记录详情：
+以下是 ${batchRecords.length} 条记录及对应的 ${batchImages.length} 张截图：
 ${recordsInfo}
 
-🎯 严格分析要求：
-1. **精确匹配原则**：只有当记录内容**明确、清晰地符合**用户搜索需求时，才能标记为符合
-   - 例如：用户搜索"库存页输入34.89"，只有截图中**真实显示库存页面且明确可见34.89这个数字**的记录才符合
-   - 不要基于推测、猜测或部分相似就标记为符合
-   - 宁可漏掉也不要误判
+任务：
+1. 筛选：从这些记录中找出符合用户搜索条件的序列号
+2. 回答：根据用户的搜索问题，结合记录和截图内容给出详细回答
 
-2. **有截图的记录**：
-   - 仔细查看截图中的**实际内容**：页面标题、输入框的值、按钮文字、表格数据等
-   - 必须能在截图中**直接看到**用户搜索的关键信息
-   - 如果截图模糊、看不清楚，或者只是相似但不完全匹配，应标记为不符合
+规则：
+1. 查看序列号对应的图片内容，精确匹配用户搜索的关键信息
+2. 不确定的不要返回，宁可漏掉也不要误判
+3. 回答要具体：说明在哪些记录/截图中看到了什么内容
+4. 截图的右下角有具体的操作人的名称和时间
 
-3. **无截图的记录**：
-   - 仅基于页面名称、URL、操作类型等文本信息判断
-   - 如果信息不足以确认，应明确说明"无截图，无法确认"
-   - **不要**仅凭页面名称相似就判定为符合
+输出格式：
+序列号X：[详细分析，回答用户问题]
+序列号Y：[详细分析，回答用户问题]
+...
 
-4. **序列号规则**：
-   - 每条记录都有唯一的序列号（${serialNumbers[0]}、${serialNumbers[1] || serialNumbers[0]}等）
-   - 必须使用**实际序列号**，不要使用顺序编号（1、2、3）
+总结回答：
+[针对用户搜索问题的综合回答]
 
-5. **输出格式**：
-   每条记录格式："序列号X：[是否符合及详细原因]"
-   - ✅ 符合：明确说明在截图中看到了什么具体内容
-   - ❌ 不符合：说明为什么不符合
-   - ⚠️ 无法确认：说明信息不足
+符合用户搜索条件的序列号：
+##RESULTS##[符合的序列号数组]
 
-6. **最终标记**：##RESULTS##[符合条件的序列号数组]
-   - 只包含**确实符合**的序列号
-   - 有任何疑问的都不要加入
+开始分析：`;
 
-📝 输出示例：
-序列号${serialNumbers[0]}：有截图，但页面显示的是登录界面，未看到"库存"或"34.89"相关内容，不符合
-序列号${serialNumbers[1] || serialNumbers[0]}：有截图，页面标题显示"Manage Your Inventory"（库存管理），且在输入框中明确看到"34.89"数值，完全符合搜索条件 ✓
-序列号${serialNumbers[2] || serialNumbers[0]}：无截图，无法确认是否包含用户搜索的内容
+      console.log(`\n${'='.repeat(80)}`);
+      console.log(`📦 第 ${batchIndex + 1}/${totalRecordBatches} 批次数据详情`);
+      console.log(`${'='.repeat(80)}`);
 
-##RESULTS##[${serialNumbers[1] || serialNumbers[0]}]
-
-⚠️ 重要：请严格遵守"精确匹配原则"，宁可少报也不要误报！
-
-现在请开始分析：`;
-
-      console.log(`📋 当前批次: ${batchRecords.length} 条记录，${batchImages.length} 张图片`);
-      console.log(`🔢 本批次实际序列号: ${serialNumbers.join('、')}`);
+      console.log(`\n📋 记录信息:`);
+      console.log(`  - 记录数量: ${batchRecords.length} 条`);
+      console.log(`  - 序列号: ${serialNumbers.join('、')}`);
       batchRecords.forEach((r, i) => {
         console.log(`  ${i + 1}. 序列号${r.serialNumber} - ${r.webpageName} - 截图:${r.hasImage ? '✅' : '❌'}`);
       });
+
+      console.log(`\n📸 图片信息:`);
+      console.log(`  - 图片数量: ${batchImages.length} 张`);
+      batchImages.forEach((img, i) => {
+        const prefix = img.substring(0, 30);
+        const base64Start = img.indexOf('base64,') + 7;
+        const base64Length = img.length - base64Start;
+        console.log(`  图片${i + 1}: ${prefix}... (Base64长度: ${base64Length} 字符)`);
+      });
+
+      console.log(`\n📝 提示词内容:`);
+      console.log(`${'─'.repeat(80)}`);
+      console.log(batchPrompt);
+      console.log(`${'─'.repeat(80)}`);
+      console.log(`提示词长度: ${batchPrompt.length} 字符\n`);
 
       try {
         // 创建多模态消息
         const message = createMultimodalMessage(batchPrompt, batchImages);
 
-        // 验证消息中的图片数量
+        console.log(`🔧 多模态消息结构:`);
+        console.log(`  - content 数组长度: ${message.content?.length}`);
+        console.log(`  - content 类型:`, message.content?.map((c, i) => `${i + 1}.${c.type}`).join(', '));
+
+        if (Array.isArray(message.content)) {
+          message.content.forEach((item, i) => {
+            if (item.type === 'text') {
+              console.log(`  [${i + 1}] text: ${item.text.length} 字符`);
+            } else if (item.type === 'image_url') {
+              const urlLength = item.image_url?.url?.length || 0;
+              console.log(`  [${i + 1}] image_url: ${urlLength} 字符`);
+            }
+          });
+        }
+
         const imageCount = Array.isArray(message.content)
           ? message.content.filter(c => c.type === 'image_url').length
           : 0;
-        console.log(`📸 实际发送给AI的图片数量: ${imageCount}`);
-
-        // 详细日志：打印消息结构
-        console.log(`📋 消息结构:`, JSON.stringify({
-          contentLength: message.content?.length,
-          contentTypes: message.content?.map(c => c.type),
-          promptLength: batchPrompt.length,
-          imageUrlPrefixes: batchImages.map(url => url.substring(0, 50) + '...')
-        }, null, 2));
+        console.log(`  - 图片数量验证: ${imageCount} 张\n`);
 
         // 调用AI分析
         console.log(`🚀 发送第 ${batchIndex + 1} 批数据给AI...`);

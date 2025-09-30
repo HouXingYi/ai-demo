@@ -24,7 +24,7 @@ import {
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 // import BackButton from '../components/common/BackButton';
-import listData from '../mock-data/list-data-100';
+import listData from '../mock-data/list-data-inventory';
 
 const { TextArea } = Input;
 const { Text, Paragraph } = Typography;
@@ -955,8 +955,8 @@ const SmartListAnalysisPage: React.FC = () => {
         <Card>
           <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <Space>
-              <Text strong>商品列表</Text>
-              <Tag color="blue">{filteredData.length} 件商品</Tag>
+              <Text strong>记录列表</Text>
+              <Tag color="blue">{filteredData.length} 条记录</Tag>
             </Space>
             <Space>
               <Text>每页显示:</Text>

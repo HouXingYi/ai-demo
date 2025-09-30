@@ -118,8 +118,8 @@ const HomePage: React.FC = () => {
               <BulbOutlined style={{ fontSize: 64, color: '#fa8c16', marginBottom: 16 }} />
               <Title level={3} style={{ marginBottom: 16 }}>智能列表分析</Title>
               <Paragraph style={{ fontSize: 16, color: '#666', marginBottom: 24 }}>
-                基于AI的智能商品列表分析系统，支持根据自然语言提示词
-                筛选、对比、推荐和总结商品信息。
+                基于AI的智能记录列表分析系统，支持根据自然语言提示词
+                筛选、对比、推荐和总结记录信息。
               </Paragraph>
               <Button
                 type="primary"
