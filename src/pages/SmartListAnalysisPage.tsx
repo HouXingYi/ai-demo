@@ -903,7 +903,7 @@ const SmartListAnalysisPage: React.FC = () => {
                     <div style={{ marginTop: 8, fontSize: 12 }}>
                       <Space split="|" style={{ width: '100%', justifyContent: 'space-between' }}>
                         <span>📋 总共 {batchProgress.totalRecords} 条记录</span>
-                        <span>📦 每批20条 (固定策略)</span>
+                        <span>📦 每批10条 (每图1024 tokens)</span>
                         <span style={{ color: '#1890ff' }}>✨ {batchProgress.message || '处理中...'}</span>
                       </Space>
                     </div>

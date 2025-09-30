@@ -329,21 +329,21 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
       });
     }
 
-    // 🎯 按记录分批处理（每批20条记录）
+    // 🎯 按记录分批处理（每批10条记录）
     console.log('🤖 开始按记录分批AI分析...');
-    const recordBatchSize = 20; // 每批20条记录
+    const recordBatchSize = 10; // 每批10条记录（每张图片固定1024 tokens）
     const totalRecordBatches = Math.ceil(recordsData.length / recordBatchSize);
 
     console.log(`📊 分批策略: ${recordsData.length} 条记录，分为 ${totalRecordBatches} 批，每批 ${recordBatchSize} 条`);
 
-    // 创建AI模型（优化参数以支持大批量图片分析）
+    // 创建AI模型（优化参数，控制token消耗）
     const model = createChatModel({
       modelName: "kimi-latest",
       temperature: 0.1, // 降低温度，提高准确性和一致性（0.1更严格，减少幻觉）
-      maxTokens: 640000, // 大幅增加token限制，支持20条记录的超详细分析
-      timeout: 300000 // 5分钟，给AI更多处理时间
+      maxTokens: 16000, // 输出token限制（10张图片=10240 tokens + 提示词约2K = 12K输入，16K输出足够）
+      timeout: 240000 // 4分钟
     });
-    console.log('✅ AI模型创建成功 (kimi-latest, temperature=0.1, maxTokens=32000, 每批20条记录)');
+    console.log('✅ AI模型创建成功 (kimi-latest, temperature=0.1, maxTokens=16000, 每批10条记录)');
 
     // 发送初始进度
     if (sessionId) {
@@ -568,6 +568,22 @@ ${recordsInfo}
 
     console.log(`⏱️ 总处理时间: ${((Date.now() - startTime) / 1000).toFixed(1)}秒`);
 
+    // 清理uploads文件夹中的临时文件
+    console.log('🧹 开始清理uploads文件夹...');
+    try {
+      if (req.files && req.files.length > 0) {
+        for (const file of req.files) {
+          if (file.path && await fs.pathExists(file.path)) {
+            await fs.remove(file.path);
+            console.log(`🗑️ 已删除: ${file.path}`);
+          }
+        }
+        console.log(`✅ 已清理 ${req.files.length} 个临时文件`);
+      }
+    } catch (cleanupError) {
+      console.error('⚠️ 清理文件时出错:', cleanupError.message);
+    }
+
     // 释放资源
     isProcessing = false;
     if (global.gc) {
@@ -591,6 +607,22 @@ ${recordsInfo}
     // 发送错误消息
     if (sessionId) {
       progressManager.sendError(sessionId, error);
+    }
+
+    // 清理uploads文件夹中的临时文件（错误处理）
+    console.log('🧹 错误处理：清理uploads文件夹...');
+    try {
+      if (req.files && req.files.length > 0) {
+        for (const file of req.files) {
+          if (file.path && await fs.pathExists(file.path)) {
+            await fs.remove(file.path);
+            console.log(`🗑️ 已删除: ${file.path}`);
+          }
+        }
+        console.log(`✅ 错误处理：已清理 ${req.files.length} 个临时文件`);
+      }
+    } catch (cleanupError) {
+      console.error('⚠️ 错误处理清理文件时出错:', cleanupError.message);
     }
 
     // 释放资源
