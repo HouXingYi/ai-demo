@@ -66,9 +66,36 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
       });
     }
 
-    const { customPrompt = '' } = req.body;
+    const { customPrompt = '', imageRecordMapping = '[]' } = req.body;
     console.log('自定义提示词长度:', customPrompt.length);
     console.log('提示词预览:', customPrompt.substring(0, 100) + '...');
+
+    // 解析图片与记录的对应关系
+    let mappingData = [];
+    try {
+      mappingData = JSON.parse(imageRecordMapping);
+      console.log('图片记录映射数量:', mappingData.length);
+
+      // 验证映射数据的完整性
+      console.log('🔍 映射数据验证:');
+      mappingData.forEach((mapping, index) => {
+        console.log(`  映射${index + 1}: 序列号${mapping.serialNumber} - ${mapping.fileName} - ${mapping.webpageName}`);
+
+        // 检查必要字段
+        if (!mapping.serialNumber || !mapping.fileName) {
+          console.error(`❌ 映射${index + 1}缺少必要字段:`, mapping);
+        }
+      });
+
+      // 验证映射数量与图片数量是否一致
+      if (mappingData.length !== req.files.length) {
+        console.warn(`⚠️ 映射数量(${mappingData.length})与图片数量(${req.files.length})不一致`);
+      } else {
+        console.log('✅ 映射数量与图片数量一致');
+      }
+    } catch (error) {
+      console.warn('解析图片记录映射失败:', error);
+    }
 
     // 检查是否提供了自定义提示词
     if (!customPrompt || !customPrompt.trim()) {
@@ -105,6 +132,17 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
 
           imageUrls.push(imageUrl);
           imageNames.push(file.originalname);
+
+          // 验证图片顺序与映射的一致性
+          if (mappingData.length > totalProcessed) {
+            const expectedFileName = mappingData[totalProcessed].fileName;
+            if (file.originalname === expectedFileName) {
+              console.log(`✅ 图片顺序验证通过: ${file.originalname} 对应序列号 ${mappingData[totalProcessed].serialNumber}`);
+            } else {
+              console.warn(`⚠️ 图片顺序可能有误: 期望 ${expectedFileName}, 实际 ${file.originalname}`);
+            }
+          }
+
           totalProcessed++;
 
           console.log(`✅ 成功处理: ${file.originalname}, Base64长度: ${base64Image.length}`);
@@ -135,10 +173,61 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
 
     console.log(`📊 总共成功处理了 ${imageUrls.length} 张图片，跳过了 ${req.files.length - imageUrls.length} 张`);
 
-    // 使用用户自定义的提示词
-    const promptText = customPrompt.trim();
+    // 构建严格的一一对应分析提示词
+    let enhancedPrompt = customPrompt.trim();
+
+    if (mappingData.length > 0) {
+      // 为每张图片构建详细的对应关系说明
+      const detailedMappingInfo = mappingData.map((mapping, index) => {
+        return `
+【图片 ${index + 1}】
+- 文件名: ${mapping.fileName}
+- 对应记录序列号: ${mapping.serialNumber}
+- 页面名称: ${mapping.webpageName}
+- 操作时间: ${mapping.triggerTime}
+- 操作类型: ${mapping.actionEvent}
+- 页面URL: 请从原始数据中查找序列号${mapping.serialNumber}对应的URL信息`;
+      }).join('\n');
+
+      enhancedPrompt += `
+
+🔥 重要说明：图片与数据记录的严格对应关系
+${detailedMappingInfo}
+
+📋 严格的分析要求：
+1. 🎯 图片顺序对应关系：
+   - 我发送给你的图片顺序严格按照上述映射列表排列
+   - 第1张图片 = 映射列表中的【图片 1】
+   - 第2张图片 = 映射列表中的【图片 2】
+   - 以此类推，绝对不能错位！
+
+2. 📝 分析输出格式：
+   请为每张图片按以下格式输出：
+   
+   ===== 序列号${mappingData.length > 0 ? mappingData[0].serialNumber : 'X'}的图片分析 =====
+   对应文件: ${mappingData.length > 0 ? mappingData[0].fileName : 'filename.webp'}
+   图片内容: [详细描述你在这张图片中看到的所有内容]
+   页面类型: [判断这是什么类型的页面，如登录页、商品页、设置页等]
+   主要元素: [列出页面中的主要UI元素和文字]
+   操作匹配度: [分析图片内容是否与记录的操作类型"${mappingData.length > 0 ? mappingData[0].actionEvent : 'operation'}"匹配]
+   
+   ===== 序列号${mappingData.length > 1 ? mappingData[1].serialNumber : 'Y'}的图片分析 =====
+   对应文件: ${mappingData.length > 1 ? mappingData[1].fileName : 'filename.webp'}
+   [继续按相同格式分析...]
+
+3. 🔍 筛选判断：
+   根据用户的搜索需求和每张图片的实际内容，判断哪些记录符合条件
+
+4. 📊 最终输出：
+   在所有图片分析完成后，输出符合条件的序列号列表：
+   FILTERED_RESULTS: [序列号1, 序列号2, ...]
+
+⚠️ 关键提醒：图片与序列号的对应关系是固定的，请严格按照映射关系进行分析，确保分析结果的准确性！`;
+    }
+
     console.log('🤖 开始AI分析...');
-    console.log('使用自定义提示词进行多图片分析');
+    console.log('使用严格对应的增强提示词进行多图片分析');
+    console.log('图片映射信息条数:', mappingData.length);
 
     // 使用配置模块创建多模态模型
     console.log('⚙️ 创建AI模型...');
@@ -150,7 +239,7 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
 
     // 使用配置模块创建多模态消息
     console.log('📝 创建多模态消息...');
-    const message = createMultimodalMessage(promptText, imageUrls);
+    const message = createMultimodalMessage(enhancedPrompt, imageUrls);
     console.log('✅ 多模态消息创建成功');
 
     // 打印详细的AI请求数据
@@ -159,8 +248,9 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
     console.log('  - temperature: 0.7');
     console.log('  - maxTokens: 2000');
     console.log('📝 提示词信息:');
-    console.log(`  - 提示词长度: ${promptText.length} 字符`);
-    console.log(`  - 提示词内容: "${promptText.substring(0, 300)}..."`);
+    console.log(`  - 原始提示词长度: ${customPrompt.length} 字符`);
+    console.log(`  - 增强提示词长度: ${enhancedPrompt.length} 字符`);
+    console.log(`  - 提示词内容: "${enhancedPrompt.substring(0, 300)}..."`);
     console.log('🖼️ 图片信息:');
     console.log(`  - 图片数量: ${imageUrls.length} 张`);
     console.log(`  - 图片格式统计:`);

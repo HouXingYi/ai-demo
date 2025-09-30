@@ -21,7 +21,7 @@ import {
   EyeOutlined
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import BackButton from '../components/common/BackButton';
+// import BackButton from '../components/common/BackButton';
 import listData from '../mock-data/list-data-100';
 
 const { TextArea } = Input;
@@ -381,6 +381,14 @@ ${JSON.stringify(data, null, 2)}
 
         // 收集所有截图文件（支持最多200个文件的超大批量处理）
         const imageFiles = [];
+        const imageRecordMapping: Array<{
+          imageIndex: number;
+          fileName: string;
+          serialNumber: number;
+          webpageName: string;
+          triggerTime: string;
+          actionEvent: string;
+        }> = []; // 新增：记录图片与数据记录的对应关系
         const maxFiles = 200;
         const recordsToProcess = recordsWithScreenshots.slice(0, maxFiles);
         console.log(`开始处理 ${recordsToProcess.length} 条有截图的记录（最多${maxFiles}个文件）`);
@@ -399,8 +407,17 @@ ${JSON.stringify(data, null, 2)}
             if (imageFile) {
               formData.append('images', imageFile);
               imageFiles.push(record.screenshotFileName);
+              // 新增：记录图片与数据记录的对应关系
+              imageRecordMapping.push({
+                imageIndex: successCount,
+                fileName: record.screenshotFileName,
+                serialNumber: record.serialNumber,
+                webpageName: record.webpageName,
+                triggerTime: record.triggerTime,
+                actionEvent: record.actionEvent
+              });
               successCount++;
-              console.log(`✅ 成功获取图片: ${record.screenshotFileName}, 大小: ${imageFile.size} bytes`);
+              console.log(`✅ 成功获取图片: ${record.screenshotFileName}, 序列号: ${record.serialNumber}, 大小: ${imageFile.size} bytes`);
             } else {
               failedFiles.push(record.screenshotFileName);
               console.warn(`⚠️ 无法获取图片: ${record.screenshotFileName}`);
@@ -426,7 +443,22 @@ ${JSON.stringify(data, null, 2)}
 
         console.log(`📊 最终统计: 尝试处理 ${recordsToProcess.length} 条记录，成功获取 ${imageFiles.length} 张有效图片`);
 
+        // 新增：特别验证序列号97的映射（用于调试）
+        const serial97Mapping = imageRecordMapping.find(m => m.serialNumber === 97);
+        if (serial97Mapping) {
+          console.log(`🎯 序列号97的映射验证:`);
+          console.log(`  - 文件名: ${serial97Mapping.fileName}`);
+          console.log(`  - 图片索引: ${serial97Mapping.imageIndex}`);
+          console.log(`  - 页面名称: ${serial97Mapping.webpageName}`);
+          console.log(`  - 操作时间: ${serial97Mapping.triggerTime}`);
+        } else {
+          console.log(`⚠️ 未找到序列号97的映射信息`);
+        }
+
         if (imageFiles.length > 0) {
+          // 新增：将图片与记录的对应关系信息发送给后端
+          formData.append('imageRecordMapping', JSON.stringify(imageRecordMapping));
+
           console.log(`🚀 发送请求到: ${getApiBaseUrl()}/api/ai/analyze-multi-images`);
           console.log(`📦 FormData包含: ${imageFiles.length} 个图片文件`);
 
@@ -438,11 +470,30 @@ ${JSON.stringify(data, null, 2)}
           console.log('📊 FormData 详细内容:');
           console.log(`  - customPrompt: "${analysisPrompt.substring(0, 200)}..."`);
           console.log(`  - 图片文件数量: ${imageFiles.length}`);
+          console.log(`  - 图片记录映射: ${imageRecordMapping.length} 条`);
           console.log(`  - 图片文件列表:`);
           imageFiles.forEach((fileName, index) => {
-            console.log(`    ${index + 1}. ${fileName}`);
+            const mapping = imageRecordMapping[index];
+            console.log(`    ${index + 1}. ${fileName} (序列号: ${mapping?.serialNumber}, 页面: ${mapping?.webpageName})`);
           });
+
+          // 新增：详细的映射关系验证
+          console.log('\n🔍 图片与记录映射关系验证:');
+          imageRecordMapping.forEach((mapping, index) => {
+            console.log(`图片${index + 1}: ${mapping.fileName} ↔ 序列号${mapping.serialNumber} (${mapping.webpageName})`);
+          });
+
+          // 新增：检查是否有重复的序列号
+          const serialNumbers = imageRecordMapping.map(m => m.serialNumber);
+          const duplicates = serialNumbers.filter((item, index) => serialNumbers.indexOf(item) !== index);
+          if (duplicates.length > 0) {
+            console.warn('⚠️ 发现重复的序列号:', duplicates);
+          } else {
+            console.log('✅ 所有序列号都是唯一的');
+          }
           console.log('=== 前端请求数据结束 ===\n');
+
+          console.log('formData', formData);
 
           const response = await fetch(`${getApiBaseUrl()}/api/ai/analyze-multi-images`, {
             method: 'POST',
@@ -628,7 +679,7 @@ ${JSON.stringify(data, null, 2)}
 
   return (
     <div style={{ minHeight: '100vh', background: '#f5f5f5', padding: '20px' }}>
-      <BackButton />
+      {/* <BackButton /> */}
 
       <div style={{ maxWidth: 1400, margin: '0 auto', paddingTop: 80 }}>
 
@@ -751,7 +802,8 @@ ${JSON.stringify(data, null, 2)}
         open={previewVisible}
         onCancel={handlePreviewClose}
         footer={null}
-        width={800}
+        width="90vw"
+        style={{ maxWidth: '1400px' }}
         centered
         destroyOnClose
         maskClosable={true}
@@ -764,13 +816,29 @@ ${JSON.stringify(data, null, 2)}
           </div>
         ) : (
           previewImage && (
-            <Image
-              src={previewImage}
-              alt="截图预览"
-              style={{ width: '100%' }}
-              preview={false}
-              fallback="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMIAAADDCAYAAADQvc6UAAABRWlDQ1BJQ0MgUHJvZmlsZQAAKJFjYGASSSwoyGFhYGDIzSspCnJ3UoiIjFJgf8LAwSDCIMogwMCcmFxc4BgQ4ANUwgCjUcG3awyMIPqyLsis7PPOq3QdDFcvjV3jOD1boQVTPQrgSkktTgbSf4A4LbmgqISBgTEFyFYuLykAsTuAbJEioKOA7DkgdjqEvQHEToKwj4DVhAQ5A9k3gGyB5IxEoBmML4BsnSQk8XQkNtReEOBxcfXxUQg1Mjc0dyHgXNJBSWpFCYh2zi+oLMpMzyhRcASGUqqCZ16yno6CkYGRAQMDKMwhqj/fAIcloxgHQqxAjIHBEugw5sUIsSQpBobtQPdLciLEVJYzMPBHMDBsayhILEqEO4DxG0txmrERhM29nYGBddr//5/DGRjYNRkY/l7////39v///y4Dmn+LgeHANwDrkl1AuO+pmgAAADhlWElmTU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAAqACAAQAAAABAAAAwqADAAQAAAABAAAAwwAAAAD9b/HnAAAHlklEQVR4Ae3dP3Ik1RnG4W+FgYxN"
-            />
+            <div style={{
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              minHeight: '60vh',
+              maxHeight: '80vh',
+              overflow: 'auto'
+            }}>
+              <Image
+                src={previewImage}
+                alt="截图预览"
+                style={{
+                  maxWidth: '100%',
+                  maxHeight: '80vh',
+                  objectFit: 'contain',
+                  cursor: 'zoom-in'
+                }}
+                preview={{
+                  mask: <div style={{ color: 'white' }}>点击放大查看</div>
+                }}
+                fallback="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMIAAADDCAYAAADQvc6UAAABRWlDQ1BJQ0MgUHJvZmlsZQAAKJFjYGASSSwoyGFhYGDIzSspCnJ3UoiIjFJgf8LAwSDCIMogwMCcmFxc4BgQ4ANUwgCjUcG3awyMIPqyLsis7PPOq3QdDFcvjV3jOD1boQVTPQrgSkktTgbSf4A4LbmgqISBgTEFyFYuLykAsTuAbJEioKOA7DkgdjqEvQHEToKwj4DVhAQ5A9k3gGyB5IxEoBmML4BsnSQk8XQkNtReEOBxcfXxUQg1Mjc0dyHgXNJBSWpFCYh2zi+oLMpMzyhRcASGUqqCZ16yno6CkYGRAQMDKMwhqj/fAIcloxgHQqxAjIHBEugw5sUIsSQpBobtQPdLciLEVJYzMPBHMDBsayhILEqEO4DxG0txmrERhM29nYGBddr//5/DGRjYNRkY/l7////39v///y4Dmn+LgeHANwDrkl1AuO+pmgAAADhlWElmTU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAAqACAAQAAAABAAAAwqADAAQAAAABAAAAwwAAAAD9b/HnAAAHlklEQVR4Ae3dP3Ik1RnG4W+FgYxN"
+              />
+            </div>
           )
         )}
       </Modal>
