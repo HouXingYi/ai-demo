@@ -150,7 +150,7 @@ const SmartListAnalysisPage: React.FC = () => {
 
             notification.success({
               message: '分析完成',
-              description: `成功分析了${message.totalImages}张图片，耗时${Math.round(message.totalTime / 1000)}秒`,
+              // description: `成功分析了${message.totalImages}张图片，耗时${Math.round(message.totalTime / 1000)}秒`,
             });
             break;
 

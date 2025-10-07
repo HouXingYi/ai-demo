@@ -1,5 +1,14 @@
 const listData = [
   {
+    "serialNumber": 33,
+    "webpageName": "Manage Your Inventory",
+    "webpageUrl": "https://sellercentral-europe.amazon.com/myinventory/inventory",
+    "actionEvent": "点击鼠标左键",
+    "triggerTime": "2025-07-24 09:30:51",
+    "screenshotFileName": "20250724 09_30_51.webp",
+    "downloadUploadFileName": ""
+  },
+  {
     "serialNumber": 41,
     "webpageName": "Manage Your Inventory",
     "webpageUrl": "https://sellercentral-europe.amazon.com/myinventory/inventory",
@@ -33,15 +42,6 @@ const listData = [
     "actionEvent": "点击鼠标左键",
     "triggerTime": "2025-07-24 09:32:39",
     "screenshotFileName": "20250724 09_32_39.webp",
-    "downloadUploadFileName": ""
-  },
-  {
-    "serialNumber": 33,
-    "webpageName": "Manage Your Inventory",
-    "webpageUrl": "https://sellercentral-europe.amazon.com/myinventory/inventory",
-    "actionEvent": "点击鼠标左键",
-    "triggerTime": "2025-07-24 09:30:51",
-    "screenshotFileName": "20250724 09_30_51.webp",
     "downloadUploadFileName": ""
   },
   {

@@ -329,9 +329,9 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
       });
     }
 
-    // 🎯 按记录分批处理（每批10条记录）
+    // 🎯 按记录分批处理（每批5条记录）
     console.log('🤖 开始按记录分批AI分析...');
-    const recordBatchSize = 10; // 每批10条记录（每张图片固定1024 tokens）
+    const recordBatchSize = 5; // 每批5条记录（减少AI压力，提高准确性）
     const totalRecordBatches = Math.ceil(recordsData.length / recordBatchSize);
 
     console.log(`📊 分批策略: ${recordsData.length} 条记录，分为 ${totalRecordBatches} 批，每批 ${recordBatchSize} 条`);
@@ -340,10 +340,10 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
     const model = createChatModel({
       modelName: "kimi-latest",
       temperature: 0.1, // 降低温度，提高准确性和一致性（0.1更严格，减少幻觉）
-      maxTokens: 16000, // 输出token限制（10张图片=10240 tokens + 提示词约2K = 12K输入，16K输出足够）
-      timeout: 240000 // 4分钟
+      maxTokens: 8000, // 输出token限制（5张图片=5120 tokens + 提示词约1K = 6K输入，8K输出足够）
+      timeout: 180000 // 3分钟
     });
-    console.log('✅ AI模型创建成功 (kimi-latest, temperature=0.1, maxTokens=16000, 每批10条记录)');
+    console.log('✅ AI模型创建成功 (kimi-latest, temperature=0.1, maxTokens=8000, 每批5条记录)');
 
     // 发送初始进度
     if (sessionId) {
@@ -380,48 +380,73 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
 
       // 为当前批次构建提示词和图片
       const batchImages = [];
+      const serialToImageMap = {}; // 序列号 -> {图片索引, 文件名}的映射
+
       const recordsInfo = batchRecords.map((record, idx) => {
         if (record.hasImage && record.screenshotFileName && imageFileMap.has(record.screenshotFileName)) {
           batchImages.push(imageFileMap.get(record.screenshotFileName));
-          return `序列号${record.serialNumber} | ${record.webpageName} | ${record.actionEvent} | 图片${batchImages.length}`;
+          const imgIndex = batchImages.length;
+
+          // 建立序列号 -> 图片的映射关系
+          serialToImageMap[record.serialNumber] = {
+            imgIndex,
+            fileName: record.screenshotFileName
+          };
+
+          console.log(`    [映射] 序列号${record.serialNumber} → 图片位置${imgIndex} → 文件: ${record.screenshotFileName}`);
+
+          return `序列号${record.serialNumber} | ${record.webpageName} | ${record.actionEvent} | 对应下方第${imgIndex}张图片`;
         } else {
-          return `序列号${record.serialNumber} | ${record.webpageName} | ${record.actionEvent} | 无图片`;
+          return `序列号${record.serialNumber} | ${record.webpageName} | ${record.actionEvent} | 无截图`;
         }
       }).join('\n');
 
+      // 构建清晰的图片位置说明（按图片在数组中的实际顺序）
+      const imageMappingText = Object.keys(serialToImageMap).length > 0
+        ? `\n\n📸 重要：图片顺序与记录的对应关系\n随文本消息发送了 ${batchImages.length} 张图片，按以下顺序排列：\n${Object.entries(serialToImageMap)
+          .sort((a, b) => a[1].imgIndex - b[1].imgIndex) // 按图片索引排序
+          .map(([serial, info]) => {
+            const { imgIndex, fileName } = info;
+            return `第${imgIndex}张图片 = 序列号${serial}的截图（文件名：${fileName}）`;
+          }).join('\n')}\n\n请严格按照上述顺序分析图片！`
+        : '';
+
       const serialNumbers = batchRecords.map(r => r.serialNumber);
       const batchPrompt = `
-      用户搜索："${customPrompt.trim()}"
+        用户搜索："${customPrompt.trim()}"
 
-      以下是 ${batchRecords.length} 条记录及对应的 ${batchImages.length} 张截图：
-      ${recordsInfo}
-
-
-      任务：
-      1. 筛选：从这些记录中找出符合用户搜索条件的序列号
-      2. 回答：根据用户的搜索问题，结合记录和截图内容给出详细回答
+        本批次包含 ${batchRecords.length} 条记录：
+        ${recordsInfo}${imageMappingText}
 
 
-      规则：
-      1. 查看序列号对应的图片内容，精确匹配用户搜索的关键信息
-      2. 不确定的不要返回，宁可漏掉也不要误判
-      3. 回答要具体：说明在哪些记录/截图中看到了什么内容
-      4. 截图的右下角有具体的操作人的名称和时间
+        ⚠️ 关键说明：
+        - 我在文本消息后发送了 ${batchImages.length} 张截图
+        - 图片的顺序已在上方明确标注
+        - 请按照"第X张图片 = 序列号Y"的对应关系分析
 
 
-      输出格式：
-      序列号X：[详细分析，回答用户问题]
-      序列号Y：[详细分析，回答用户问题]
-      ...
-      序列号Z：[详细分析，回答用户问题]
+        任务：
+        1. 查看每张图片，识别其内容
+        2. 根据用户搜索词"${customPrompt.trim()}"，判断哪些序列号的截图符合条件
+        3. 给出详细分析说明
 
-      总结回答：
-      [针对用户搜索问题的综合回答]
 
-      符合用户搜索条件的序列号：
-      ##RESULTS##[符合的序列号数组]
+        分析规则：
+        1. 严格按照图片顺序对应序列号，不要弄混
+        2. 精确匹配用户搜索的关键信息，不确定的不要返回
+        3. 截图右下角显示了操作人和时间信息
+        4. 必须在分析中明确说明"第X张图片（序列号Y）中看到了..."
 
-      开始分析：
+
+        输出格式：
+        序列号X（第N张图片）：[详细说明在这张图片中看到了什么，是否符合搜索条件]
+        序列号Y（第M张图片）：[详细说明在这张图片中看到了什么，是否符合搜索条件]
+        ...
+
+        总结：
+        [综合说明哪些序列号符合条件]
+
+        ##RESULTS##[符合条件的序列号数组]
 `;
 
       console.log(`\n${'='.repeat(80)}`);
@@ -444,6 +469,24 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
         console.log(`  图片${i + 1}: ${prefix}... (Base64长度: ${base64Length} 字符)`);
       });
 
+      console.log(`\n🔗 序列号 ↔ 截图文件 ↔ 图片位置 映射关系（按图片数组顺序）:`);
+      console.log(`总计 ${Object.keys(serialToImageMap).length} 条记录有图片映射`);
+
+      // 按图片索引排序显示，这样能看到实际的图片顺序
+      const sortedMapping = Object.entries(serialToImageMap).sort((a, b) => a[1].imgIndex - b[1].imgIndex);
+      sortedMapping.forEach(([serial, info]) => {
+        const { imgIndex, fileName } = info;
+        console.log(`  第${imgIndex}张图片 = 序列号${serial}的截图 (文件: ${fileName})`);
+      });
+
+      // 验证图片数量是否匹配
+      if (batchImages.length !== Object.keys(serialToImageMap).length) {
+        console.error(`⚠️ 警告：图片数量(${batchImages.length})与映射数量(${Object.keys(serialToImageMap).length})不一致！`);
+      }
+
+      console.log(`\n✅ AI 将看到的图片顺序:`);
+      console.log(`文本部分(提示词) → 第1张图片 → 第2张图片 → ... → 第${batchImages.length}张图片`);
+
       console.log(`\n📝 提示词内容:`);
       console.log(`${'─'.repeat(80)}`);
       console.log(batchPrompt);
@@ -454,17 +497,27 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
         // 创建多模态消息
         const message = createMultimodalMessage(batchPrompt, batchImages);
 
-        console.log(`🔧 多模态消息结构:`);
+        console.log(`🔧 多模态消息结构（发送给AI的实际数据）:`);
         console.log(`  - content 数组长度: ${message.content?.length}`);
         console.log(`  - content 类型:`, message.content?.map((c, i) => `${i + 1}.${c.type}`).join(', '));
 
         if (Array.isArray(message.content)) {
+          console.log(`\n  📋 详细结构：`);
           message.content.forEach((item, i) => {
             if (item.type === 'text') {
-              console.log(`  [${i + 1}] text: ${item.text.length} 字符`);
+              console.log(`  [位置${i + 1}] 文本部分: ${item.text.length} 字符`);
             } else if (item.type === 'image_url') {
               const urlLength = item.image_url?.url?.length || 0;
-              console.log(`  [${i + 1}] image_url: ${urlLength} 字符`);
+              // 图片的实际位置 = 索引 - 1（因为第一个是文本）
+              const imagePosition = message.content.slice(0, i).filter(c => c.type === 'image_url').length + 1;
+              console.log(`  [位置${i + 1}] 第${imagePosition}张图片: ${urlLength} 字符`);
+
+              // 根据映射找到对应的序列号
+              const mappingEntry = sortedMapping.find(([_, info]) => info.imgIndex === imagePosition);
+              if (mappingEntry) {
+                const [serial, info] = mappingEntry;
+                console.log(`       ↳ 这是序列号${serial}的截图 (${info.fileName})`);
+              }
             }
           });
         }
@@ -472,7 +525,8 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
         const imageCount = Array.isArray(message.content)
           ? message.content.filter(c => c.type === 'image_url').length
           : 0;
-        console.log(`  - 图片数量验证: ${imageCount} 张\n`);
+        console.log(`\n  ✅ 图片数量验证: ${imageCount} 张`);
+        console.log(`  ✅ AI 看到的顺序: [文本] → [图1] → [图2] → ... → [图${imageCount}]\n`);
 
         // 调用AI分析
         console.log(`🚀 发送第 ${batchIndex + 1} 批数据给AI...`);
