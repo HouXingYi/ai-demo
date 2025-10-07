@@ -331,19 +331,26 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
 
     // 🎯 按记录分批处理（每批3条记录）
     console.log('🤖 开始按记录分批AI分析...');
-    const recordBatchSize = 3; // 每批3条记录（实测证明3条准确率最高，AI负担最小）
+    // ⚠️ 重要：批次大小设置为3的原因
+    // 1. 图片过多会导致AI分析混淆，图片映射容易出错
+    // 2. 实测证明3张图片是AI的最佳工作负载，准确率最高
+    // 3. 批次虽然多，但单批处理快，总体时间可接受
+    // 4. 建议不要调整为5张以上，否则图片分析会出现错误
+    const recordBatchSize = 3; // 每批3条记录（⚠️ 不建议增加，图片过多会导致分析错误）
     const totalRecordBatches = Math.ceil(recordsData.length / recordBatchSize);
 
     console.log(`📊 分批策略: ${recordsData.length} 条记录，分为 ${totalRecordBatches} 批，每批 ${recordBatchSize} 条`);
 
     // 创建AI模型（优化参数，控制token消耗）
+    // 可以通过环境变量 AI_PROVIDER 来切换模型：doubao（默认）或 kimi
+    const aiProvider = process.env.AI_PROVIDER || "doubao";
     const model = createChatModel({
-      modelName: "kimi-latest",
+      provider: aiProvider,
       temperature: 0.1, // 降低温度，提高准确性和一致性（0.1更严格，减少幻觉）
       maxTokens: 4000, // 输出token限制（3张图片=3072 tokens + 提示词约0.5K = 3.5K输入，4K输出足够简洁回复）
-      timeout: 120000 // 2分钟
+      timeout: 120000 // 2分钟（3张图片处理更快）
     });
-    console.log('✅ AI模型创建成功 (kimi-latest, temperature=0.1, maxTokens=4000, 每批3条记录)');
+    console.log(`✅ AI模型创建成功 (${aiProvider}, temperature=0.1, maxTokens=4000, 每批3条记录)`);
 
     // 发送初始进度
     if (sessionId) {

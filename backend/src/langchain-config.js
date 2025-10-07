@@ -5,12 +5,25 @@ import { StringOutputParser } from '@langchain/core/output_parsers';
 import { HumanMessage } from '@langchain/core/messages';
 import { RunnableSequence } from '@langchain/core/runnables';
 
+// 模型配置
+const MODEL_CONFIGS = {
+  kimi: {
+    modelName: "kimi-latest",
+    baseURL: "https://api.moonshot.cn/v1",
+    apiKey: process.env.MOONSHOT_API_KEY || "sk-1hxK03JHKAqXZ0nDirDTD8wZOdwcmepAoI1D8M3FW5VJCP7S",
+  },
+  doubao: {
+    // modelName: "doubao-seed-1-6-250615", // 均衡
+    // modelName: "doubao-seed-1-6-vision-250815", // 视觉
+    modelName: "doubao-seed-1-6-flash-250828", // 快速
+    baseURL: "https://ark.cn-beijing.volces.com/api/v3",
+    apiKey: process.env.DOUBAO_API_KEY || "28f6eee0-4d9e-4c77-975d-2f9b27b90a4c",
+  }
+};
+
 // 默认配置
 const DEFAULT_CONFIG = {
-  modelName: "kimi-latest",
-  // modelName: "kimi-k2-turbo-preview",
-  // modelName: "moonshot-v1-8k-vision-preview",
-  baseURL: "https://api.moonshot.cn/v1",
+  provider: "doubao", // 默认使用 doubao，可选 "kimi"
   temperature: 0.6,
   maxTokens: 2000,
   maxRetries: 3,
@@ -20,21 +33,35 @@ const DEFAULT_CONFIG = {
 /**
  * 创建LangChain聊天模型实例
  * @param {Object} options - 配置选项
+ * @param {string} options.provider - 模型提供商 ("kimi" 或 "doubao")
+ * @param {string} options.modelName - 模型名称（可选，覆盖默认）
+ * @param {number} options.temperature - 温度参数
+ * @param {number} options.maxTokens - 最大token数
+ * @param {number} options.timeout - 超时时间（毫秒）
  * @returns {ChatOpenAI} - 配置好的模型实例
  */
 export function createChatModel(options = {}) {
   const config = { ...DEFAULT_CONFIG, ...options };
+  const provider = config.provider || "doubao";
+  const modelConfig = MODEL_CONFIGS[provider];
+
+  if (!modelConfig) {
+    throw new Error(`不支持的模型提供商: ${provider}。支持的选项: ${Object.keys(MODEL_CONFIGS).join(', ')}`);
+  }
+
+  console.log(`🤖 创建AI模型: ${provider} (${options.modelName || modelConfig.modelName})`);
 
   // LangChain.js的ChatOpenAI需要这样配置自定义API
   return new ChatOpenAI({
-    model: config.modelName,
-    apiKey: process.env.MOONSHOT_API_KEY || "sk-1hxK03JHKAqXZ0nDirDTD8wZOdwcmepAoI1D8M3FW5VJCP7S",
+    model: options.modelName || modelConfig.modelName,
+    apiKey: modelConfig.apiKey,
     configuration: {
-      baseURL: config.baseURL,
+      baseURL: modelConfig.baseURL,
     },
     temperature: config.temperature,
     maxTokens: config.maxTokens,
-    maxRetries: config.maxRetries
+    maxRetries: config.maxRetries,
+    timeout: config.timeout || 180000 // 默认3分钟
   });
 }
 
@@ -173,5 +200,5 @@ export function getBestPracticeConfig() {
   };
 }
 
-// 导出默认配置
-export { DEFAULT_CONFIG };
+// 导出配置
+export { DEFAULT_CONFIG, MODEL_CONFIGS };
