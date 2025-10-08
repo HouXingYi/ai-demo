@@ -18,6 +18,11 @@ const MODEL_CONFIGS = {
     modelName: "doubao-seed-1-6-flash-250828", // 快速
     baseURL: "https://ark.cn-beijing.volces.com/api/v3",
     apiKey: process.env.DOUBAO_API_KEY || "28f6eee0-4d9e-4c77-975d-2f9b27b90a4c",
+  },
+  qianfan: {
+    modelName: "ernie-4.5-turbo-vl-latest",
+    baseURL: "https://qianfan.baidubce.com/v2",
+    apiKey: process.env.QIANFAN_API_KEY || "bce-v3/ALTAK-DuGKPBTOhaT2FKO0MulC0/69d6e617125578c6f2f7e7620dfcdde1fd0b932b",
   }
 };
 
