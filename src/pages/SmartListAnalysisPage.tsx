@@ -24,7 +24,7 @@ import {
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 // import BackButton from '../components/common/BackButton';
-import listData from '../mock-data/list-data-inventory';
+import listData from '../mock-data/list-data-all';
 
 const { TextArea } = Input;
 const { Text, Paragraph } = Typography;
@@ -76,8 +76,8 @@ const SmartListAnalysisPage: React.FC = () => {
   const connectWebSocket = (sessionId: string) => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const hostname = window.location.hostname;
-    const port = hostname === 'localhost' || hostname === '127.0.0.1' ? '3001' : window.location.port;
-    const wsUrl = `${protocol}//${hostname}:${port}/ws/progress?sessionId=${sessionId}`;
+    // 后端WebSocket始终在3001端口，无论前端在哪个端口
+    const wsUrl = `${protocol}//${hostname}:3001/ws/progress?sessionId=${sessionId}`;
 
     console.log('🔌 连接WebSocket:', wsUrl);
 
@@ -126,7 +126,7 @@ const SmartListAnalysisPage: React.FC = () => {
             }
             break;
 
-          case 'final_result':
+          case 'final_result': {
             console.log('🎉 所有批次完成！', message);
             console.log('📥 前端收到的filteredResults:', message.filteredResults);
             console.log('📥 filteredResults类型:', Array.isArray(message.filteredResults) ? 'Array' : typeof message.filteredResults);
@@ -166,6 +166,7 @@ const SmartListAnalysisPage: React.FC = () => {
               // description: `成功分析了${message.totalImages}张图片，耗时${Math.round(message.totalTime / 1000)}秒`,
             });
             break;
+          }
 
           case 'error':
             console.error('❌ WebSocket错误消息:', message);

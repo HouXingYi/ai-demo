@@ -335,8 +335,8 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
     // 1. 图片和文本紧密相邻，大模型更容易建立对应关系
     // 2. 不依赖"第X张图"的间接引用，直接"记录→截图"
     // 3. 减少大模型的工作记忆负担，提高准确率
-    // 4. 批次大小5条，平衡准确率和效率
-    const recordBatchSize = 5; // 每批5条记录（交错式可以处理更多，准确率更高）
+    // 4. 批次大小10条，提高处理效率
+    const recordBatchSize = 10; // 每批10条记录（交错式测试更大批次）
     const totalRecordBatches = Math.ceil(recordsData.length / recordBatchSize);
 
     console.log(`📊 分批策略: ${recordsData.length} 条记录，分为 ${totalRecordBatches} 批，每批 ${recordBatchSize} 条`);
@@ -347,10 +347,10 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
     const model = createChatModel({
       provider: aiProvider,
       temperature: 0.1, // 降低温度，提高准确性和一致性（0.1更严格，减少幻觉）
-      maxTokens: 16000, // 输出token限制（5张图片=5120 tokens + 提示词约1K = 6K输入，16K输出足够）
-      timeout: 180000 // 3分钟（5张图片处理时间）
+      maxTokens: 20000, // 输出token限制（10张图片=10240 tokens + 提示词约1.5K = 12K输入，20K输出足够）
+      timeout: 240000 // 4分钟（10张图片处理时间更长）
     });
-    console.log(`✅ AI模型创建成功 (${aiProvider}, temperature=0.1, maxTokens=16000, 每批5条记录, 交错式多模态)`);
+    console.log(`✅ AI模型创建成功 (${aiProvider}, temperature=0.1, maxTokens=20000, 每批10条记录, 交错式多模态)`);
 
     // 发送初始进度
     if (sessionId) {
