@@ -882,7 +882,7 @@ const SmartListAnalysisPage: React.FC = () => {
                     handleAnalyze();
                   }
                 }}
-                placeholder="例如：筛选出访问亚马逊网站的操作记录，或者分析点击操作的频率... (按Ctrl+回车或Shift+回车开始搜索)"
+                placeholder="请输入搜索提示词..."
                 rows={3}
                 style={{ marginTop: 8 }}
               />
