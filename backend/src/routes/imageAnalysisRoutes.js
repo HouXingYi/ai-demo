@@ -420,19 +420,19 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
 
       const serialNumbers = batchRecords.map(r => r.serialNumber);
       const batchPrompt = `
-        搜索目标："${customPrompt.trim()}"
+        搜索提示词："${customPrompt.trim()}"
 
         记录列表（共${batchRecords.length}条）：
-        ${recordsInfo}${imageMappingText}
+        序列号 | 页面名称 | 操作 | 截图
+        ${recordsInfo}
+        
+        ${imageMappingText}
 
         任务：从上述记录中找出符合搜索目标的序列号
 
-        规则：
-        1. 按图片映射关系分析（图1对应的序列号、图2对应的序列号...）
-        2. 只返回确实符合的序列号，不确定的不要返回
-        3. 可查看截图右下角的操作人信息辅助判断
+        规则：按图片映射关系分析（图1对应的序列号、图2对应的序列号...）
 
-        输出格式（简洁）：
+        输出格式：
         序列号X：符合/不符合 [原因一句话]
         序列号Y：符合/不符合 [原因一句话]
 
@@ -442,6 +442,8 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
 
         注意：如果没有符合的记录，必须返回 ##RESULTS##[]
 `;
+
+      console.log('batchPrompt22222', batchPrompt);
 
       console.log(`\n${'='.repeat(80)}`);
       console.log(`📦 第 ${batchIndex + 1}/${totalRecordBatches} 批次数据详情`);
