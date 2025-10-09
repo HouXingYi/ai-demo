@@ -52,6 +52,10 @@ const SmartListAnalysisPage: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
+  // 页面名称筛选状态
+  const [pageNameFilter, setPageNameFilter] = useState<string>('');
+  const [baseFilteredData, setBaseFilteredData] = useState<ListItem[]>(listData); // 基础筛选后的数据（页面名称筛选）
+
   // 批处理进度状态
   const [batchProgress, setBatchProgress] = useState({
     current: 0,
@@ -146,15 +150,15 @@ const SmartListAnalysisPage: React.FC = () => {
 
             // 提取筛选结果并更新列表
             console.log('🔍 开始筛选数据...');
-            console.log('  - 当前data长度:', data.length);
+            console.log('  - 基础筛选数据长度:', baseFilteredData.length);
             console.log('  - filteredResults:', message.filteredResults);
 
             if (message.filteredResults && message.filteredResults.length > 0) {
-              const filteredRecords = data.filter(record =>
+              const filteredRecords = baseFilteredData.filter(record =>
                 message.filteredResults.includes(record.serialNumber)
               );
-              console.log('  - 筛选后记录数:', filteredRecords.length);
-              console.log('  - 筛选后的记录:', filteredRecords.map(r => r.serialNumber));
+              console.log('  - AI筛选后记录数:', filteredRecords.length);
+              console.log('  - AI筛选后的记录:', filteredRecords.map(r => r.serialNumber));
               setFilteredData(filteredRecords);
               setCurrentPage(1);
             } else {
@@ -385,12 +389,46 @@ const SmartListAnalysisPage: React.FC = () => {
     });
   };
 
-  // 重置筛选结果
+  // 获取所有唯一的页面名称
+  const getUniquePageNames = () => {
+    const pageNames = new Set(data.map(item => item.webpageName));
+    return Array.from(pageNames).sort();
+  };
+
+  // 页面名称筛选处理
+  const handlePageNameFilter = (value: string) => {
+    setPageNameFilter(value);
+    if (value) {
+      const filtered = data.filter(item => item.webpageName === value);
+      setBaseFilteredData(filtered);
+      setFilteredData(filtered);
+      console.log(`📋 页面名称筛选: "${value}", 筛选后记录数: ${filtered.length}`);
+    } else {
+      setBaseFilteredData([...data]);
+      setFilteredData([...data]);
+      console.log('📋 清除页面名称筛选，显示所有记录');
+    }
+    setCurrentPage(1);
+  };
+
+  // 重置筛选结果（只重置AI筛选，保留页面名称筛选）
   const resetFilter = () => {
+    setFilteredData([...baseFilteredData]);
+    setCurrentPage(1);
+    notification.info({
+      message: '已重置AI筛选',
+      description: pageNameFilter ? `保留页面名称筛选: ${pageNameFilter}` : '显示所有操作记录',
+    });
+  };
+
+  // 清除所有筛选
+  const clearAllFilters = () => {
+    setPageNameFilter('');
+    setBaseFilteredData([...data]);
     setFilteredData([...data]);
     setCurrentPage(1);
     notification.info({
-      message: '已重置筛选',
+      message: '已清除所有筛选',
       description: '显示所有操作记录',
     });
   };
@@ -607,7 +645,13 @@ const SmartListAnalysisPage: React.FC = () => {
       console.log('API基础URL：', getApiBaseUrl());
 
       // 🎯 新逻辑：准备所有记录数据（包括有图和没图的）
-      const allRecordsData = data.map(record => ({
+      // 使用 baseFilteredData 而不是 data，这样会应用页面名称筛选
+      console.log(`📊 使用${pageNameFilter ? '筛选后' : '全部'}的数据: ${baseFilteredData.length} 条记录`);
+      if (pageNameFilter) {
+        console.log(`🔍 页面名称筛选: ${pageNameFilter}`);
+      }
+
+      const allRecordsData = baseFilteredData.map(record => ({
         serialNumber: record.serialNumber,
         webpageName: record.webpageName,
         webpageUrl: record.webpageUrl,
@@ -788,11 +832,11 @@ const SmartListAnalysisPage: React.FC = () => {
 
             console.log('🔢 筛选的序号:', filteredNumbers);
 
-            // 根据筛选结果更新显示的数据
-            const filteredRecords = data.filter(record =>
+            // 根据筛选结果更新显示的数据（使用baseFilteredData）
+            const filteredRecords = baseFilteredData.filter(record =>
               filteredNumbers.includes(record.serialNumber)
             );
-            console.log('📊 筛选后的记录数量:', filteredRecords.length);
+            console.log('📊 AI筛选后的记录数量:', filteredRecords.length);
             setFilteredData(filteredRecords);
           } else {
             console.log('⚠️ 文本分析未找到筛选结果标记，显示所有数据');
@@ -843,6 +887,31 @@ const SmartListAnalysisPage: React.FC = () => {
         {/* 分析控制面板 */}
         <Card style={{ marginBottom: 24 }}>
           <Space direction="vertical" style={{ width: '100%' }} size="middle">
+            {/* 页面名称筛选 */}
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+              <Text strong>页面名称筛选:</Text>
+              <Select
+                style={{ width: 300 }}
+                placeholder="选择页面名称进行筛选"
+                value={pageNameFilter || undefined}
+                onChange={handlePageNameFilter}
+                allowClear
+                showSearch
+                filterOption={(input, option) =>
+                  (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                }
+                options={getUniquePageNames().map(name => ({
+                  label: name,
+                  value: name
+                }))}
+              />
+              {pageNameFilter && (
+                <Tag color="blue">
+                  已筛选: {baseFilteredData.length} 条记录
+                </Tag>
+              )}
+            </div>
+
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <Button
                 type="primary"
@@ -857,10 +926,19 @@ const SmartListAnalysisPage: React.FC = () => {
               <Button
                 onClick={resetFilter}
                 size="large"
-                disabled={filteredData.length === data.length}
+                disabled={filteredData.length === baseFilteredData.length}
               >
-                重置筛选
+                重置AI筛选
               </Button>
+
+              {pageNameFilter && (
+                <Button
+                  onClick={clearAllFilters}
+                  size="large"
+                >
+                  清除所有筛选
+                </Button>
+              )}
 
               <Button
                 icon={<ReloadOutlined />}
