@@ -329,14 +329,14 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
       });
     }
 
-    // 🎯 按记录分批处理（每批3条记录）
-    console.log('🤖 开始按记录分批AI分析...');
-    // ⚠️ 重要：批次大小设置为3的原因
-    // 1. 图片过多会导致AI分析混淆，图片映射容易出错
-    // 2. 实测证明3张图片是AI的最佳工作负载，准确率最高
-    // 3. 批次虽然多，但单批处理快，总体时间可接受
-    // 4. 建议不要调整为5张以上，否则图片分析会出现错误
-    const recordBatchSize = 3; // 每批3条记录（⚠️ 不建议增加，图片过多会导致分析错误）
+    // 🎯 按记录分批处理（交错式多模态优化）
+    console.log('🤖 开始按记录分批AI分析（交错式多模态）...');
+    // 💡 交错式多模态的优势：
+    // 1. 图片和文本紧密相邻，大模型更容易建立对应关系
+    // 2. 不依赖"第X张图"的间接引用，直接"记录→截图"
+    // 3. 减少大模型的工作记忆负担，提高准确率
+    // 4. 可以适当增加批次大小（测试10条记录/批）
+    const recordBatchSize = 10; // 每批10条记录（交错式测试更大批次）
     const totalRecordBatches = Math.ceil(recordsData.length / recordBatchSize);
 
     console.log(`📊 分批策略: ${recordsData.length} 条记录，分为 ${totalRecordBatches} 批，每批 ${recordBatchSize} 条`);
@@ -347,10 +347,10 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
     const model = createChatModel({
       provider: aiProvider,
       temperature: 0.1, // 降低温度，提高准确性和一致性（0.1更严格，减少幻觉）
-      maxTokens: 4000, // 输出token限制（3张图片=3072 tokens + 提示词约0.5K = 3.5K输入，4K输出足够简洁回复）
-      timeout: 120000 // 2分钟（3张图片处理更快）
+      maxTokens: 20000, // 输出token限制（10张图片=10240 tokens + 提示词约1.5K = 12K输入，20K输出足够）
+      timeout: 240000 // 4分钟（10张图片处理时间更长）
     });
-    console.log(`✅ AI模型创建成功 (${aiProvider}, temperature=0.1, maxTokens=4000, 每批3条记录)`);
+    console.log(`✅ AI模型创建成功 (${aiProvider}, temperature=0.1, maxTokens=20000, 每批10条记录, 交错式多模态)`);
 
     // 发送初始进度
     if (sessionId) {
@@ -385,68 +385,88 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
         });
       }
 
-      // 为当前批次构建提示词和图片
-      const batchImages = [];
-      const serialToImageMap = {}; // 序列号 -> {图片索引, 文件名}的映射
-
-      const recordsInfo = batchRecords.map((record, idx) => {
-        if (record.hasImage && record.screenshotFileName && imageFileMap.has(record.screenshotFileName)) {
-          batchImages.push(imageFileMap.get(record.screenshotFileName));
-          const imgIndex = batchImages.length;
-
-          // 建立序列号 -> 图片的映射关系
-          serialToImageMap[record.serialNumber] = {
-            imgIndex,
-            fileName: record.screenshotFileName
-          };
-
-          console.log(`    [映射] 序列号${record.serialNumber} → 图片位置${imgIndex} → 文件: ${record.screenshotFileName}`);
-
-          return `序列号${record.serialNumber} | ${record.webpageName} | ${record.actionEvent} | 对应下方第${imgIndex}张图片`;
-        } else {
-          return `序列号${record.serialNumber} | ${record.webpageName} | ${record.actionEvent} | 无截图`;
-        }
-      }).join('\n');
-
-      // 构建清晰的图片位置说明（按图片在数组中的实际顺序）
-      const imageMappingText = Object.keys(serialToImageMap).length > 0
-        ? `\n\n图片映射：\n${Object.entries(serialToImageMap)
-          .sort((a, b) => a[1].imgIndex - b[1].imgIndex) // 按图片索引排序
-          .map(([serial, info]) => {
-            const { imgIndex } = info;
-            return `图${imgIndex}→序列号${serial}`;
-          }).join(' | ')}`
-        : '';
-
+      // 🎯 构建交错式多模态消息内容（文本和图片交错排列）
+      // 这种方式让大模型更容易建立图片和记录的对应关系
+      const messageContent = [];
       const serialNumbers = batchRecords.map(r => r.serialNumber);
-      const batchPrompt = `
-        搜索提示词："${customPrompt.trim()}"
 
-        记录列表（共${batchRecords.length}条）：
-        序列号 | 页面名称 | 操作 | 截图
-        ${recordsInfo}
-        
-        ${imageMappingText}
+      // 1. 添加任务说明（开头）
+      const taskIntro = `
+搜索提示词："${customPrompt.trim()}"
 
-        任务：从上述记录中找出符合搜索目标的序列号
+任务：从以下 ${batchRecords.length} 条记录中，根据搜索提示词，找出符合搜索目标的序列号。
 
-        规则：按图片映射关系分析（图1对应的序列号、图2对应的序列号...）
+每条记录的格式：
+【记录信息】→【对应截图】
 
-        输出格式：
-        序列号X：符合/不符合 [原因一句话]
-        序列号Y：符合/不符合 [原因一句话]
-
-        【重要】必须在最后一行返回：
-        ##RESULTS##[符合的序列号数组]
-        示例：##RESULTS##[19,24,28] 或 ##RESULTS##[]
-
-        注意：如果没有符合的记录，必须返回 ##RESULTS##[]
+请逐条分析：
 `;
+      messageContent.push({
+        type: 'text',
+        text: taskIntro.trim()
+      });
 
-      console.log('batchPrompt22222', batchPrompt);
+      // 2. 交错添加记录文本和对应图片
+      let imageCounter = 0;
+      batchRecords.forEach((record, idx) => {
+        // 添加记录文本信息
+        const recordText = `
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+【记录 ${idx + 1}】
+  序列号：${record.serialNumber}
+  页面名称：${record.webpageName}
+  操作事件：${record.actionEvent}
+  截图状态：${record.hasImage ? '✅ 有截图（见下图）' : '❌ 无截图'}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`;
+        messageContent.push({
+          type: 'text',
+          text: recordText.trim()
+        });
+
+        // 如果有截图，紧接着添加图片
+        if (record.hasImage && record.screenshotFileName && imageFileMap.has(record.screenshotFileName)) {
+          imageCounter++;
+          messageContent.push({
+            type: 'image_url',
+            image_url: {
+              url: imageFileMap.get(record.screenshotFileName)
+            }
+          });
+          console.log(`    ✅ 序列号${record.serialNumber} → 图片${imageCounter} → 文件: ${record.screenshotFileName}`);
+        } else {
+          console.log(`    ⚠️ 序列号${record.serialNumber} → 无截图`);
+        }
+      });
+
+      // 3. 添加输出格式要求（结尾）
+      const outputFormat = `
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+【输出要求】
+
+请对每条记录进行判断，输出格式：
+序列号X：符合/不符合 [原因一句话]
+序列号Y：符合/不符合 [原因一句话]
+
+【重要】必须在最后一行返回：
+##RESULTS##[符合的序列号数组]
+
+⚠️ 特别注意：
+1. 每条记录的截图紧跟在记录信息之后
+2. 必须返回【真实的序列号】，不是记录编号
+3. 例如【记录1】的序列号是${batchRecords[0].serialNumber}，【记录2】的序列号是${batchRecords[1]?.serialNumber || 'N/A'}
+4. 正确示例：##RESULTS##[${batchRecords[0].serialNumber},${batchRecords[1]?.serialNumber || '...'}]
+5. 错误示例：##RESULTS##[1,2]（这是记录编号，不是序列号）
+6. 如果没有符合的记录，必须返回 ##RESULTS##[]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`;
+      messageContent.push({
+        type: 'text',
+        text: outputFormat.trim()
+      });
 
       console.log(`\n${'='.repeat(80)}`);
-      console.log(`📦 第 ${batchIndex + 1}/${totalRecordBatches} 批次数据详情`);
+      console.log(`📦 第 ${batchIndex + 1}/${totalRecordBatches} 批次数据详情（交错式多模态）`);
       console.log(`${'='.repeat(80)}`);
 
       console.log(`\n📋 记录信息:`);
@@ -456,73 +476,48 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
         console.log(`  ${i + 1}. 序列号${r.serialNumber} - ${r.webpageName} - 截图:${r.hasImage ? '✅' : '❌'}`);
       });
 
-      console.log(`\n📸 图片信息:`);
-      console.log(`  - 图片数量: ${batchImages.length} 张`);
-      batchImages.forEach((img, i) => {
-        const prefix = img.substring(0, 30);
-        const base64Start = img.indexOf('base64,') + 7;
-        const base64Length = img.length - base64Start;
-        console.log(`  图片${i + 1}: ${prefix}... (Base64长度: ${base64Length} 字符)`);
+      console.log(`\n📸 图片信息（交错式排列）:`);
+      console.log(`  - 图片数量: ${imageCounter} 张`);
+      console.log(`  - 排列方式: 每条记录的文本紧跟其对应的截图`);
+
+      console.log(`\n✅ AI 将看到的数据结构（交错式）:`);
+      console.log(`  [任务说明]`);
+      batchRecords.forEach((record, i) => {
+        if (record.hasImage && record.screenshotFileName && imageFileMap.has(record.screenshotFileName)) {
+          console.log(`  → [记录${i + 1}文本] → [记录${i + 1}截图] (序列号${record.serialNumber})`);
+        } else {
+          console.log(`  → [记录${i + 1}文本] (序列号${record.serialNumber}, 无截图)`);
+        }
       });
+      console.log(`  → [输出格式要求]`);
 
-      console.log(`\n🔗 序列号 ↔ 截图文件 ↔ 图片位置 映射关系（按图片数组顺序）:`);
-      console.log(`总计 ${Object.keys(serialToImageMap).length} 条记录有图片映射`);
-
-      // 按图片索引排序显示，这样能看到实际的图片顺序
-      const sortedMapping = Object.entries(serialToImageMap).sort((a, b) => a[1].imgIndex - b[1].imgIndex);
-      sortedMapping.forEach(([serial, info]) => {
-        const { imgIndex, fileName } = info;
-        console.log(`  第${imgIndex}张图片 = 序列号${serial}的截图 (文件: ${fileName})`);
-      });
-
-      // 验证图片数量是否匹配
-      if (batchImages.length !== Object.keys(serialToImageMap).length) {
-        console.error(`⚠️ 警告：图片数量(${batchImages.length})与映射数量(${Object.keys(serialToImageMap).length})不一致！`);
-      }
-
-      console.log(`\n✅ AI 将看到的图片顺序:`);
-      console.log(`文本部分(提示词) → 第1张图片 → 第2张图片 → ... → 第${batchImages.length}张图片`);
-
-      console.log(`\n📝 提示词内容:`);
-      console.log(`${'─'.repeat(80)}`);
-      console.log(batchPrompt);
-      console.log(`${'─'.repeat(80)}`);
-      console.log(`提示词长度: ${batchPrompt.length} 字符\n`);
+      console.log(`\n📊 消息内容统计:`);
+      console.log(`  - content数组长度: ${messageContent.length}`);
+      console.log(`  - 文本块数量: ${messageContent.filter(c => c.type === 'text').length}`);
+      console.log(`  - 图片块数量: ${messageContent.filter(c => c.type === 'image_url').length}`);
 
       try {
-        // 创建多模态消息
-        const message = createMultimodalMessage(batchPrompt, batchImages);
+        // 🎯 使用交错式消息内容（不再使用createMultimodalMessage）
+        const message = {
+          role: 'user',
+          content: messageContent
+        };
 
-        console.log(`🔧 多模态消息结构（发送给AI的实际数据）:`);
-        console.log(`  - content 数组长度: ${message.content?.length}`);
-        console.log(`  - content 类型:`, message.content?.map((c, i) => `${i + 1}.${c.type}`).join(', '));
+        console.log(`\n🔧 交错式多模态消息结构验证:`);
+        console.log(`  - content 数组长度: ${message.content.length}`);
+        console.log(`  - 文本块: ${message.content.filter(c => c.type === 'text').length} 个`);
+        console.log(`  - 图片块: ${message.content.filter(c => c.type === 'image_url').length} 个`);
 
-        if (Array.isArray(message.content)) {
-          console.log(`\n  📋 详细结构：`);
-          message.content.forEach((item, i) => {
-            if (item.type === 'text') {
-              console.log(`  [位置${i + 1}] 文本部分: ${item.text.length} 字符`);
-            } else if (item.type === 'image_url') {
-              const urlLength = item.image_url?.url?.length || 0;
-              // 图片的实际位置 = 索引 - 1（因为第一个是文本）
-              const imagePosition = message.content.slice(0, i).filter(c => c.type === 'image_url').length + 1;
-              console.log(`  [位置${i + 1}] 第${imagePosition}张图片: ${urlLength} 字符`);
-
-              // 根据映射找到对应的序列号
-              const mappingEntry = sortedMapping.find(([_, info]) => info.imgIndex === imagePosition);
-              if (mappingEntry) {
-                const [serial, info] = mappingEntry;
-                console.log(`       ↳ 这是序列号${serial}的截图 (${info.fileName})`);
-              }
-            }
-          });
-        }
-
-        const imageCount = Array.isArray(message.content)
-          ? message.content.filter(c => c.type === 'image_url').length
-          : 0;
-        console.log(`\n  ✅ 图片数量验证: ${imageCount} 张`);
-        console.log(`  ✅ AI 看到的顺序: [文本] → [图1] → [图2] → ... → [图${imageCount}]\n`);
+        console.log(`\n  📋 详细结构（交错式）：`);
+        message.content.forEach((item, i) => {
+          if (item.type === 'text') {
+            const preview = item.text.substring(0, 50).replace(/\n/g, ' ');
+            console.log(`  [${i + 1}] 文本: ${preview}...`);
+          } else if (item.type === 'image_url') {
+            const urlLength = item.image_url?.url?.length || 0;
+            console.log(`  [${i + 1}] 图片: ${urlLength} 字符 (Base64)`);
+          }
+        });
 
         // 调用AI分析
         console.log(`🚀 发送第 ${batchIndex + 1} 批数据给AI...`);
@@ -621,6 +616,12 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
 
     // 发送最终结果
     if (sessionId) {
+      console.log('\n📤 准备发送最终结果给前端:');
+      console.log('  - filteredResults:', uniqueFilteredResults);
+      console.log('  - filteredResults类型:', Array.isArray(uniqueFilteredResults) ? 'Array' : typeof uniqueFilteredResults);
+      console.log('  - filteredResults长度:', uniqueFilteredResults.length);
+      console.log('  - matchedCount:', uniqueFilteredResults.length);
+
       progressManager.sendFinalResult(sessionId, {
         analysis: finalAnalysis,
         filteredResults: uniqueFilteredResults,
@@ -628,6 +629,8 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
         matchedCount: uniqueFilteredResults.length,
         processingTime: `${((Date.now() - startTime) / 1000).toFixed(1)}秒`
       });
+
+      console.log('✅ 最终结果已发送');
     }
 
     console.log(`⏱️ 总处理时间: ${((Date.now() - startTime) / 1000).toFixed(1)}秒`);

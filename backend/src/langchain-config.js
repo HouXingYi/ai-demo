@@ -92,22 +92,27 @@ export function createChatChain(systemPrompt = "你是一个有用的AI助手。
 /**
  * 创建多模态消息（支持图片）
  * @param {string} text - 文本内容
- * @param {Array} images - 图片数组
+ * @param {Array} images - 图片数组（按顺序）
  * @returns {HumanMessage} - 多模态消息
  */
 export function createMultimodalMessage(text, images = []) {
+  // 使用数组构建，确保严格按照顺序
   const content = [
     {
       type: "text",
       text: text
-    },
-    ...images.map(image => ({
+    }
+  ];
+
+  // 使用forEach严格按照images数组的顺序添加图片
+  images.forEach(image => {
+    content.push({
       type: "image_url",
       image_url: {
         url: image
       }
-    }))
-  ];
+    });
+  });
 
   return new HumanMessage({ content });
 }

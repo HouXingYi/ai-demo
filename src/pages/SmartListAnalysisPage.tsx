@@ -128,6 +128,11 @@ const SmartListAnalysisPage: React.FC = () => {
 
           case 'final_result':
             console.log('🎉 所有批次完成！', message);
+            console.log('📥 前端收到的filteredResults:', message.filteredResults);
+            console.log('📥 filteredResults类型:', Array.isArray(message.filteredResults) ? 'Array' : typeof message.filteredResults);
+            console.log('📥 filteredResults长度:', message.filteredResults?.length);
+            console.log('📥 matchedCount:', message.matchedCount);
+
             setBatchProgress(prev => ({
               ...prev,
               current: message.totalBatches || 0,
@@ -140,12 +145,20 @@ const SmartListAnalysisPage: React.FC = () => {
             setAnalysisResult(prev => prev + finalSummary);
 
             // 提取筛选结果并更新列表
+            console.log('🔍 开始筛选数据...');
+            console.log('  - 当前data长度:', data.length);
+            console.log('  - filteredResults:', message.filteredResults);
+
             if (message.filteredResults && message.filteredResults.length > 0) {
               const filteredRecords = data.filter(record =>
                 message.filteredResults.includes(record.serialNumber)
               );
+              console.log('  - 筛选后记录数:', filteredRecords.length);
+              console.log('  - 筛选后的记录:', filteredRecords.map(r => r.serialNumber));
               setFilteredData(filteredRecords);
               setCurrentPage(1);
+            } else {
+              console.log('  ⚠️ filteredResults为空或不存在，不更新筛选');
             }
 
             notification.success({
