@@ -335,8 +335,8 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
     // 1. 图片和文本紧密相邻，大模型更容易建立对应关系
     // 2. 不依赖"第X张图"的间接引用，直接"记录→截图"
     // 3. 减少大模型的工作记忆负担，提高准确率
-    // 4. 可以适当增加批次大小（测试10条记录/批）
-    const recordBatchSize = 10; // 每批10条记录（交错式测试更大批次）
+    // 4. 批次大小5条，平衡准确率和效率
+    const recordBatchSize = 5; // 每批5条记录（交错式可以处理更多，准确率更高）
     const totalRecordBatches = Math.ceil(recordsData.length / recordBatchSize);
 
     console.log(`📊 分批策略: ${recordsData.length} 条记录，分为 ${totalRecordBatches} 批，每批 ${recordBatchSize} 条`);
@@ -347,10 +347,10 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
     const model = createChatModel({
       provider: aiProvider,
       temperature: 0.1, // 降低温度，提高准确性和一致性（0.1更严格，减少幻觉）
-      maxTokens: 20000, // 输出token限制（10张图片=10240 tokens + 提示词约1.5K = 12K输入，20K输出足够）
-      timeout: 240000 // 4分钟（10张图片处理时间更长）
+      maxTokens: 16000, // 输出token限制（5张图片=5120 tokens + 提示词约1K = 6K输入，16K输出足够）
+      timeout: 180000 // 3分钟（5张图片处理时间）
     });
-    console.log(`✅ AI模型创建成功 (${aiProvider}, temperature=0.1, maxTokens=20000, 每批10条记录, 交错式多模态)`);
+    console.log(`✅ AI模型创建成功 (${aiProvider}, temperature=0.1, maxTokens=16000, 每批5条记录, 交错式多模态)`);
 
     // 发送初始进度
     if (sessionId) {
@@ -440,25 +440,16 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
       });
 
       // 3. 添加输出格式要求（结尾）
-      const outputFormat = `
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-【输出要求】
+      const allSerialNumbers = batchRecords.map(r => r.serialNumber).join(',');
 
+      const outputFormat = `
+
+【输出要求】
 请对每条记录进行判断，输出格式：
 序列号X：符合/不符合 [原因一句话]
-序列号Y：符合/不符合 [原因一句话]
 
-【重要】必须在最后一行返回：
-##RESULTS##[符合的序列号数组]
-
-⚠️ 特别注意：
-1. 每条记录的截图紧跟在记录信息之后
-2. 必须返回【真实的序列号】，不是记录编号
-3. 例如【记录1】的序列号是${batchRecords[0].serialNumber}，【记录2】的序列号是${batchRecords[1]?.serialNumber || 'N/A'}
-4. 正确示例：##RESULTS##[${batchRecords[0].serialNumber},${batchRecords[1]?.serialNumber || '...'}]
-5. 错误示例：##RESULTS##[1,2]（这是记录编号，不是序列号）
-6. 如果没有符合的记录，必须返回 ##RESULTS##[]
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+最后一行返回：##RESULTS##[符合的序列号数组]
+本批次序列号：${allSerialNumbers}
 `;
       messageContent.push({
         type: 'text',
