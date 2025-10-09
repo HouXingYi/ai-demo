@@ -28,7 +28,7 @@ const MODEL_CONFIGS = {
 
 // 默认配置
 const DEFAULT_CONFIG = {
-  provider: "doubao", // 默认使用 doubao，可选 "kimi"
+  provider: "kimi", // 默认使用 kimi，可选 "doubao"
   temperature: 0.6,
   maxTokens: 2000,
   maxRetries: 3,
@@ -47,7 +47,7 @@ const DEFAULT_CONFIG = {
  */
 export function createChatModel(options = {}) {
   const config = { ...DEFAULT_CONFIG, ...options };
-  const provider = config.provider || "doubao";
+  const provider = config.provider || "kimi";
   const modelConfig = MODEL_CONFIGS[provider];
 
   if (!modelConfig) {

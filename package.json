@@ -4,9 +4,10 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently --kill-others --names \"后台,前台\" --prefix-colors \"cyan,green\" \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev": "npm run clean:port && concurrently --kill-others --names \"后台,前台\" --prefix-colors \"cyan,green\" \"npm run dev:backend\" \"npm run dev:frontend\"",
     "dev:frontend": "vite",
     "dev:backend": "cd backend && npm run dev",
+    "clean:port": "node kill-port-3001.js",
     "stop": "node stop-dev.js",
     "build": "tsc -b && vite build",
     "lint": "eslint .",

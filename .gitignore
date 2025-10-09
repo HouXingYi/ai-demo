@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Upload directories
+backend/uploads/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -343,7 +343,7 @@ router.post('/analyze-multi-images', upload.array('images', 200), handleMulterEr
 
     // 创建AI模型（优化参数，控制token消耗）
     // 可以通过环境变量 AI_PROVIDER 来切换模型：doubao（默认）或 kimi
-    const aiProvider = process.env.AI_PROVIDER || "doubao";
+    const aiProvider = process.env.AI_PROVIDER || "kimi";
     const model = createChatModel({
       provider: aiProvider,
       temperature: 0.1, // 降低温度，提高准确性和一致性（0.1更严格，减少幻觉）
